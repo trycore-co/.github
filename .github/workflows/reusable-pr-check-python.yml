@@ -1,0 +1,264 @@
+name: Reusable — PR Check Python Service
+
+on:
+  workflow_call:
+    inputs:
+      service-dir:
+        description: 'Directorio del servicio desde la raíz del repo (ej: validation-service)'
+        required: true
+        type: string
+      sonar-project-key:
+        required: true
+        type: string
+      sonar-project-name:
+        required: true
+        type: string
+      python-version:
+        required: false
+        type: string
+        default: '3.11'
+      has-tests:
+        description: 'true si el servicio tiene suite de unit tests'
+        required: false
+        type: boolean
+        default: true
+      tests-continue-on-error:
+        description: 'TEMPORAL: true cuando hay tests rotos siendo corregidos'
+        required: false
+        type: boolean
+        default: false
+      coverage-exclusions:
+        description: 'Patrones Sonar para excluir de cobertura'
+        required: false
+        type: string
+        default: 'app/api/**,app/main.py,app/config.py'
+    secrets:
+      SONAR_TOKEN:
+        required: true
+
+jobs:
+  check:
+    name: ${{ inputs.has-tests && 'Tests & SonarQube' || 'SonarQube' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      checks: write
+      contents: read
+      security-events: write
+      actions: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.service-dir }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        if: ${{ inputs.has-tests }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: 'pip'
+
+      - name: Cache SonarQube
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Install dependencies
+        if: ${{ inputs.has-tests }}
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-asyncio httpx
+
+      - name: Run unit tests with coverage
+        if: ${{ inputs.has-tests }}
+        continue-on-error: ${{ inputs.tests-continue-on-error }}
+        run: |
+          pytest tests/unit/ -v \
+            --cov=app \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing \
+            --junitxml=test-results.xml \
+            --tb=short
+
+      - name: Encabezado Unit Tests en summary
+        if: ${{ inputs.has-tests }}
+        run: |
+          echo "## 🧪 Unit Tests — ${{ inputs.sonar-project-name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publicar resultados de tests
+        uses: mikepenz/action-junit-report@v4
+        if: ${{ inputs.has-tests }}
+        with:
+          report_paths: '${{ inputs.service-dir }}/test-results.xml'
+          check_name: 'Unit Tests — ${{ inputs.sonar-project-name }}'
+
+      - name: Preparar sonar-project.properties
+        if: always()
+        run: |
+          cat > sonar-project.properties << EOF
+          sonar.projectKey=${{ inputs.sonar-project-key }}
+          sonar.projectName=${{ inputs.sonar-project-name }}
+          sonar.sources=app
+          sonar.python.version=${{ inputs.python-version }}
+          sonar.qualitygate.wait=false
+          EOF
+
+          if [ "${{ inputs.has-tests }}" = "true" ]; then
+            cat >> sonar-project.properties << EOF
+          sonar.exclusions=**/__pycache__/**,**/venv/**,**/.venv/**,**/*.pyc,**/tests/**
+          sonar.tests=tests
+          sonar.test.inclusions=**/test_*.py
+          sonar.python.coverage.reportPaths=coverage.xml
+          sonar.coverage.exclusions=${{ inputs.coverage-exclusions }}
+          EOF
+          else
+            cat >> sonar-project.properties << EOF
+          sonar.exclusions=**/__pycache__/**,**/venv/**,**/.venv/**,**/*.pyc
+          EOF
+          fi
+
+      - name: SonarQube Scan
+        if: always()
+        uses: sonarsource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        with:
+          projectBaseDir: ${{ inputs.service-dir }}
+
+      - name: Resumen SonarQube en Actions
+        if: always()
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        run: |
+          REPORT=".scannerwork/report-task.txt"
+          if [ ! -f "$REPORT" ]; then
+            echo "## 🔍 SonarQube" >> "$GITHUB_STEP_SUMMARY"
+            echo "⚠️ El análisis no generó reporte (posible fallo de conexión)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          DASHBOARD_URL=$(grep "^dashboardUrl=" "$REPORT" | cut -d= -f2-)
+          CE_TASK_ID=$(grep "^ceTaskId=" "$REPORT" | cut -d= -f2-)
+
+          for i in $(seq 1 12); do
+            TASK_STATUS=$(curl -sf -u "$SONAR_TOKEN:" \
+              "$SONAR_HOST_URL/api/ce/task?id=$CE_TASK_ID" \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['task']['status'])" 2>/dev/null || echo "PENDING")
+            if [ "$TASK_STATUS" = "SUCCESS" ] || [ "$TASK_STATUS" = "FAILED" ] || [ "$TASK_STATUS" = "CANCELLED" ]; then
+              break
+            fi
+            sleep 5
+          done
+
+          HAS_TESTS="${{ inputs.has-tests }}"
+          METRIC_KEYS="duplicated_lines_density,bugs,vulnerabilities,code_smells,security_hotspots"
+          [ "$HAS_TESTS" = "true" ] && METRIC_KEYS="coverage,$METRIC_KEYS"
+
+          QG_JSON=$(curl -sf -u "$SONAR_TOKEN:" \
+            "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=${{ inputs.sonar-project-key }}" 2>/dev/null || echo "{}")
+          QG_STATUS=$(echo "$QG_JSON" | python3 -c \
+            "import sys,json; print(json.load(sys.stdin).get('projectStatus',{}).get('status','UNKNOWN'))" 2>/dev/null || echo "UNKNOWN")
+
+          METRICS_JSON=$(curl -sf -u "$SONAR_TOKEN:" \
+            "$SONAR_HOST_URL/api/measures/component?component=${{ inputs.sonar-project-key }}&metricKeys=$METRIC_KEYS" 2>/dev/null || echo "{}")
+
+          parse_metric() {
+            echo "$METRICS_JSON" | python3 -c \
+              "import sys,json; m={x['metric']:x.get('value','N/A') for x in json.load(sys.stdin).get('component',{}).get('measures',[])}; print(m.get('$1','N/A'))" 2>/dev/null || echo "N/A"
+          }
+
+          COVERAGE=$(parse_metric coverage)
+          DUPLICATIONS=$(parse_metric duplicated_lines_density)
+          BUGS=$(parse_metric bugs)
+          VULNERABILITIES=$(parse_metric vulnerabilities)
+          CODE_SMELLS=$(parse_metric code_smells)
+          SEC_HOTSPOTS=$(parse_metric security_hotspots)
+
+          if   [ "$QG_STATUS" = "OK" ];    then QG_BADGE="✅ PASSED"
+          elif [ "$QG_STATUS" = "ERROR" ]; then QG_BADGE="❌ FAILED"
+          else                                  QG_BADGE="⚠️ $QG_STATUS"
+          fi
+
+          if [ "$HAS_TESTS" = "true" ]; then
+            COVERAGE_ROW="| Coverage | ${COVERAGE}% | ≥ 80% |"
+          else
+            COVERAGE_ROW="> ℹ️ Sin cobertura — este servicio no tiene suite de unit tests aún."
+          fi
+
+          cat >> "$GITHUB_STEP_SUMMARY" << SUMMARY
+          ## 🔍 SonarQube — $QG_BADGE
+
+          | Métrica | Valor | Umbral |
+          |---------|-------|--------|
+          | Quality Gate | $QG_BADGE | — |
+          $COVERAGE_ROW
+          | Duplicaciones | ${DUPLICATIONS}% | ≤ 3% |
+          | Bugs | $BUGS | 0 críticos |
+          | Vulnerabilidades | $VULNERABILITIES | 0 críticas |
+          | Code Smells | $CODE_SMELLS | — |
+          | Security Hotspots | $SEC_HOTSPOTS | 0 sin revisar |
+
+          [📊 Ver análisis completo en SonarQube]($DASHBOARD_URL)
+          SUMMARY
+
+      - name: Quality Gate
+        uses: sonarsource/sonarqube-quality-gate-action@master
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        with:
+          scanMetadataReportFile: ${{ inputs.service-dir }}/.scannerwork/report-task.txt
+
+      - name: Trivy — escanear y guardar tabla
+        if: always()
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+          trivy fs . \
+            --severity CRITICAL,HIGH,MEDIUM \
+            --ignore-unfixed \
+            --skip-dirs '.git,__pycache__,venv,.venv' \
+            --format table \
+            --output trivy-table.txt 2>/dev/null || true
+
+          CRITICAL=$(trivy fs . --severity CRITICAL --ignore-unfixed --skip-dirs '.git,__pycache__,venv,.venv' --format json 2>/dev/null \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(len(r.get('Vulnerabilities') or []) for r in d.get('Results',[])))" 2>/dev/null || echo "0")
+          HIGH=$(trivy fs . --severity HIGH --ignore-unfixed --skip-dirs '.git,__pycache__,venv,.venv' --format json 2>/dev/null \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(len(r.get('Vulnerabilities') or []) for r in d.get('Results',[])))" 2>/dev/null || echo "0")
+          MEDIUM=$(trivy fs . --severity MEDIUM --ignore-unfixed --skip-dirs '.git,__pycache__,venv,.venv' --format json 2>/dev/null \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(len(r.get('Vulnerabilities') or []) for r in d.get('Results',[])))" 2>/dev/null || echo "0")
+
+          if [ "$CRITICAL" = "0" ] && [ "$HIGH" = "0" ]; then
+            SCA_STATUS="✅ Sin vulnerabilidades CRITICAL/HIGH"
+          else
+            SCA_STATUS="⚠️ Vulnerabilidades encontradas (modo informativo)"
+          fi
+
+          cat >> "$GITHUB_STEP_SUMMARY" << SUMMARY
+          ## 🛡️ SCA — Trivy — $SCA_STATUS
+
+          | Severidad | Vulnerabilidades encontradas |
+          |-----------|----------------------------|
+          | 🔴 Critical | $CRITICAL |
+          | 🟠 High | $HIGH |
+          | 🟡 Medium | $MEDIUM |
+
+          > Solo aplica a dependencias con fix disponible. Modo informativo — no bloquea el pipeline.
+          SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-sca-report-${{ inputs.service-dir }}-${{ github.run_id }}
+          path: ${{ inputs.service-dir }}/trivy-table.txt
+          retention-days: 30
