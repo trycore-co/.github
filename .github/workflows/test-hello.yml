@@ -1,16 +1,23 @@
-name: Test — Reusable Hello
+name: Test — Reusable Hello v2
 
 on:
   workflow_call:
     inputs:
-      msg:
+      has-tests:
         required: false
+        type: boolean
+        default: true
+      service-dir:
+        required: true
         type: string
-        default: 'hello'
+    secrets:
+      SONAR_TOKEN:
+        required: true
 
 jobs:
   test:
-    name: Hello
+    name: Hello v2
     runs-on: ubuntu-latest
     steps:
-      - run: echo "${{ inputs.msg }}"
+      - run: echo "service=${{ inputs.service-dir }} has-tests=${{ inputs.has-tests }}"
+      - run: echo "token available = ${{ secrets.SONAR_TOKEN != '' }}"
