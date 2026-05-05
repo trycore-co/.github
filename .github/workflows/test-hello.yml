@@ -1,4 +1,4 @@
-name: Test — Reusable Hello v2
+name: Test — Reusable Hello v3
 
 on:
   workflow_call:
@@ -7,6 +7,10 @@ on:
         required: false
         type: boolean
         default: true
+      tests-continue-on-error:
+        required: false
+        type: boolean
+        default: false
       service-dir:
         required: true
         type: string
@@ -16,8 +20,28 @@ on:
 
 jobs:
   test:
-    name: Hello v2
+    name: Hello v3
     runs-on: ubuntu-latest
     steps:
-      - run: echo "service=${{ inputs.service-dir }} has-tests=${{ inputs.has-tests }}"
-      - run: echo "token available = ${{ secrets.SONAR_TOKEN != '' }}"
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        if: ${{ inputs.has-tests }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: '${{ inputs.service-dir }}/requirements.txt'
+
+      - name: Fake test step
+        if: ${{ inputs.has-tests }}
+        working-directory: ${{ inputs.service-dir }}
+        continue-on-error: ${{ inputs.tests-continue-on-error }}
+        run: echo "running tests"
+
+      - name: Summary step
+        if: always()
+        working-directory: ${{ inputs.service-dir }}
+        run: echo "done"
