@@ -6,11 +6,14 @@
 
 ## Guía para IA — Cómo generar un workflow desde este documento
 
+> **Contexto org trycore-co:** `SONAR_TOKEN` y `SONAR_HOST_URL` ya están configurados como secret y variable de organización respectivamente — **no se configuran por repo**. Para nuevos proyectos Python en la org, usar el wrapper de §16.4 (20 líneas) en lugar de copiar el template completo de §5. Para otros stacks (Java, React, Angular) seguir usando los templates de §4/§6/§7 por ahora — los reusable workflows para esos stacks están pendientes.
+
 Antes de generar el workflow, responde estas preguntas y sustituye los valores en el template:
 
 | Pregunta | Variable en el template |
 |---|---|
 | ¿Cuál es el nombre del servicio? | `NombreServicio` |
+| ¿Es un repo de org trycore-co con stack Python? | Sí → usar wrapper §16.4 (no copiar template completo) |
 | ¿Cuál es el stack? | Elige §4 Java, §5 Python, §6 React/Vite, §7 Angular — si es monorepo ver §15 |
 | ¿Cuál es el project key en SonarQube CI? | `SONAR_PROJECT_KEY` (formato: `Proyecto:NombreServicio`) |
 | ¿Qué ramas disparan el check? | `branches:` en el trigger |
@@ -1469,21 +1472,35 @@ Si el Poll SCM está configurado en la UI de Jenkins, no agregarlo también en e
 
 ### Preparación (una vez por proyecto)
 
-- [ ] Crear proyecto en SonarQube: `Proyecto:NombreServicio` (para CI) y `proyecto-nombreservicio-dev` (para SonarLint)
+**Credenciales — org trycore-co:**
+- [ ] `SONAR_TOKEN` → **ya existe como secret de organización** — no configurar por repo (ver §16.1)
+- [ ] `SONAR_HOST_URL` → **ya existe como variable de organización** — no configurar por repo (ver §8.1 y §16.1)
+
+**Credenciales — org externa o proyecto fuera de trycore-co:**
 - [ ] Generar token de CI en SonarQube → Mi Cuenta → Seguridad (tipo: CI)
 - [ ] En GitHub: `Settings → Secrets → Actions` → agregar `SONAR_TOKEN` con el token de CI
-- [ ] `SONAR_HOST_URL` **no se configura por repo** — ya existe como variable de organización (ver §8.1)
+- [ ] En GitHub: `Settings → Variables → Actions` → agregar `SONAR_HOST_URL` con la URL del servidor Sonar
+
+**SonarQube (aplica siempre):**
+- [ ] Si se usa auto-provisioning (token Global Analysis): el proyecto se crea automáticamente en el primer scan — no hacer nada
+- [ ] Si se usa token de proyecto específico: crear proyecto en SonarQube con el `project key` antes de correr el scan
+- [ ] Crear proyecto SonarLint para devs: `proyecto-nombreservicio-dev` + token personal (ver §10)
 
 ### Archivos a crear en el repositorio
 
-- [ ] `.github/workflows/pr-check.yml` — usar el template de la sección correspondiente al stack
+**Para repos Python en org trycore-co — usar el wrapper (§16.4):**
+- [ ] `.github/workflows/pr-check-<nombre>.yml` — copiar el wrapper de §16.4 y ajustar 4 parámetros
+- [ ] `sonar-project.properties` — usar la estructura mínima de §10 (solo para SonarLint local)
+
+**Para otros stacks o repos fuera de la org — usar el template completo:**
+- [ ] `.github/workflows/pr-check.yml` — usar el template de la sección correspondiente al stack (§4/§5/§6/§7)
 - [ ] `sonar-project.properties` — usar la estructura mínima de §10 y ajustar project key/name
 
 ### Configuración en GitHub (Branch Protection)
 
 - [ ] `Settings → Branches → Add rule` para `develop` y `main`
 - [ ] Activar **Require status checks to pass before merging**
-- [ ] Agregar como required: el nombre del job `build-test-sonar` y `sca-trivy`
+- [ ] Agregar como required: el nombre del job del workflow (ej: `check`, `build-test-sonar`, `sca-trivy`)
 - [ ] Activar **Require a pull request before merging** (1 aprobación para `develop`, 2 para `main`)
 
 ### Verificación final
@@ -1491,7 +1508,7 @@ Si el Poll SCM está configurado en la UI de Jenkins, no agregarlo también en e
 - [ ] Abrir un PR de prueba hacia `develop` — verificar que GitHub Actions corre
 - [ ] Verificar que el proyecto aparece en SonarQube con métricas reales (no 0%)
 - [ ] Verificar que el PR Summary muestra la tabla de tests y la tabla de SonarQube
-- [ ] Verificar que el PR Summary del job `sca-trivy` muestra los conteos por severidad
+- [ ] Verificar que el PR Summary muestra los conteos de Trivy por severidad
 - [ ] Si coverage < 80%, consultar la API de SonarQube (comando en §3.5) para identificar archivos a excluir vs tests a escribir
 
 ---
