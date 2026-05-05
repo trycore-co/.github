@@ -38,7 +38,7 @@ on:
 
 jobs:
   check:
-    name: ${{ inputs.has-tests && 'Tests & SonarQube' || 'SonarQube' }}
+    name: Tests & SonarQube
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -46,9 +46,6 @@ jobs:
       contents: read
       security-events: write
       actions: read
-    defaults:
-      run:
-        working-directory: ${{ inputs.service-dir }}
 
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +58,7 @@ jobs:
         with:
           python-version: ${{ inputs.python-version }}
           cache: 'pip'
+          cache-dependency-path: '${{ inputs.service-dir }}/requirements.txt'
 
       - name: Cache SonarQube
         uses: actions/cache@v4
@@ -71,12 +69,14 @@ jobs:
 
       - name: Install dependencies
         if: ${{ inputs.has-tests }}
+        working-directory: ${{ inputs.service-dir }}
         run: |
           pip install -r requirements.txt
           pip install pytest pytest-cov pytest-asyncio httpx
 
       - name: Run unit tests with coverage
         if: ${{ inputs.has-tests }}
+        working-directory: ${{ inputs.service-dir }}
         continue-on-error: ${{ inputs.tests-continue-on-error }}
         run: |
           pytest tests/unit/ -v \
@@ -101,27 +101,26 @@ jobs:
 
       - name: Preparar sonar-project.properties
         if: always()
+        working-directory: ${{ inputs.service-dir }}
         run: |
-          cat > sonar-project.properties << EOF
-          sonar.projectKey=${{ inputs.sonar-project-key }}
-          sonar.projectName=${{ inputs.sonar-project-name }}
+          cat > sonar-project.properties << 'SONAREOF'
           sonar.sources=app
-          sonar.python.version=${{ inputs.python-version }}
           sonar.qualitygate.wait=false
-          EOF
+          SONAREOF
+
+          # Agregar propiedades con valores dinámicos
+          echo "sonar.projectKey=${{ inputs.sonar-project-key }}" >> sonar-project.properties
+          echo "sonar.projectName=${{ inputs.sonar-project-name }}" >> sonar-project.properties
+          echo "sonar.python.version=${{ inputs.python-version }}" >> sonar-project.properties
 
           if [ "${{ inputs.has-tests }}" = "true" ]; then
-            cat >> sonar-project.properties << EOF
-          sonar.exclusions=**/__pycache__/**,**/venv/**,**/.venv/**,**/*.pyc,**/tests/**
-          sonar.tests=tests
-          sonar.test.inclusions=**/test_*.py
-          sonar.python.coverage.reportPaths=coverage.xml
-          sonar.coverage.exclusions=${{ inputs.coverage-exclusions }}
-          EOF
+            echo "sonar.exclusions=**/__pycache__/**,**/venv/**,**/.venv/**,**/*.pyc,**/tests/**" >> sonar-project.properties
+            echo "sonar.tests=tests" >> sonar-project.properties
+            echo "sonar.test.inclusions=**/test_*.py" >> sonar-project.properties
+            echo "sonar.python.coverage.reportPaths=coverage.xml" >> sonar-project.properties
+            echo "sonar.coverage.exclusions=${{ inputs.coverage-exclusions }}" >> sonar-project.properties
           else
-            cat >> sonar-project.properties << EOF
-          sonar.exclusions=**/__pycache__/**,**/venv/**,**/.venv/**,**/*.pyc
-          EOF
+            echo "sonar.exclusions=**/__pycache__/**,**/venv/**,**/.venv/**,**/*.pyc" >> sonar-project.properties
           fi
 
       - name: SonarQube Scan
@@ -135,6 +134,7 @@ jobs:
 
       - name: Resumen SonarQube en Actions
         if: always()
+        working-directory: ${{ inputs.service-dir }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
@@ -221,6 +221,7 @@ jobs:
 
       - name: Trivy — escanear y guardar tabla
         if: always()
+        working-directory: ${{ inputs.service-dir }}
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
