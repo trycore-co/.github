@@ -188,27 +188,23 @@ jobs:
           else                                  QG_BADGE="⚠️ $QG_STATUS"
           fi
 
-          if [ "$HAS_TESTS" = "true" ]; then
-            COVERAGE_ROW="| Coverage | ${COVERAGE}% | ≥ 80% |"
-          else
-            COVERAGE_ROW="> ℹ️ Sin cobertura — este servicio no tiene suite de unit tests aún."
-          fi
-
-          cat >> "$GITHUB_STEP_SUMMARY" << SUMMARY
-          ## 🔍 SonarQube — $QG_BADGE
-
-          | Métrica | Valor | Umbral |
-          |---------|-------|--------|
-          | Quality Gate | $QG_BADGE | — |
-          $COVERAGE_ROW
-          | Duplicaciones | ${DUPLICATIONS}% | ≤ 3% |
-          | Bugs | $BUGS | 0 críticos |
-          | Vulnerabilidades | $VULNERABILITIES | 0 críticas |
-          | Code Smells | $CODE_SMELLS | — |
-          | Security Hotspots | $SEC_HOTSPOTS | 0 sin revisar |
-
-          [📊 Ver análisis completo en SonarQube]($DASHBOARD_URL)
-          SUMMARY
+          {
+            echo "## 🔍 SonarQube — $QG_BADGE"
+            echo ""
+            echo "| Métrica | Valor | Umbral |"
+            echo "|---------|-------|--------|"
+            echo "| Quality Gate | $QG_BADGE | — |"
+            [ "$HAS_TESTS" = "true" ] && echo "| Coverage | ${COVERAGE}% | ≥ 80% |"
+            echo "| Duplicaciones | ${DUPLICATIONS}% | ≤ 3% |"
+            echo "| Bugs | $BUGS | 0 críticos |"
+            echo "| Vulnerabilidades | $VULNERABILITIES | 0 críticas |"
+            echo "| Code Smells | $CODE_SMELLS | — |"
+            echo "| Security Hotspots | $SEC_HOTSPOTS | 0 sin revisar |"
+            echo ""
+            [ "$HAS_TESTS" = "false" ] && echo "> ℹ️ Sin cobertura — este servicio no tiene suite de unit tests aún."
+            echo ""
+            echo "[📊 Ver análisis completo en SonarQube]($DASHBOARD_URL)"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Quality Gate
         uses: sonarsource/sonarqube-quality-gate-action@master
