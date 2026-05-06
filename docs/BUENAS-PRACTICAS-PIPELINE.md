@@ -57,6 +57,7 @@ Antes de generar el workflow, responde estas preguntas y sustituye los valores e
 14. [OWASP Top 10 — Cobertura por el pipeline](#14-owasp-top-10--cobertura-por-el-pipeline)
 15. [Monorepo con múltiples microservicios](#15-monorepo-con-múltiples-microservicios)
 16. [Distribución org-level y reusable workflows](#16-distribución-org-level--repo-trycore-cogithub)
+    - [16.7 Migración de repo existente al wrapper reusable](#167-migración-de-un-repo-existente-al-wrapper-reusable)
 17. [Monorepo front + backend](#17-monorepo-front--backend)
 
 ---
@@ -2850,6 +2851,197 @@ gh api repos/<org>/<repo>/actions/runs/<run-id> | python3 -c "import sys,json; [
 ```
 
 Si `total_count: 0`, el problema está en la **definición** del workflow (YAML inválido, permissions faltantes en el caller, o expresión en lugar de valor literal en un campo que no lo admite como `defaults.run.working-directory`).
+
+---
+
+---
+
+## 16.7 Migración de un repo existente al wrapper reusable
+
+> **Prerequisito:** `trycore-co/.github` ya tiene el reusable workflow (`§16.3`) y los secrets/variables ya son de organización (`§16.1`). Si no es así, hacer esos pasos primero.
+
+Esta sección describe cómo tomar un repo que ya tiene un workflow inline de ~170 líneas y convertirlo al wrapper de 25 líneas, sin perder ningún informe ni funcionalidad.
+
+---
+
+### 16.7.1 Antes de empezar — inventariar el workflow actual
+
+Leer el archivo `.github/workflows/pr-check-*.yml` existente y anotar:
+
+| Parámetro | Dónde mirarlo | Ejemplo |
+|---|---|---|
+| `service-dir` | `working-directory:` en los steps `run:` | `validation-service` |
+| `sonar-project-key` | `-Dsonar.projectKey=` o `sonar-project.properties` | `validation-service` |
+| `sonar-project-name` | `-Dsonar.projectName=` | `Validation Service` |
+| `python-version` | `python-version:` en setup-python | `3.11` |
+| `has-tests` | ¿Hay un step de pytest? `true` / `false` | `true` |
+| `tests-continue-on-error` | ¿El step de pytest tiene `continue-on-error: true`? | `false` |
+| `coverage-exclusions` | `sonar.coverage.exclusions=` en properties | `app/api/**,app/main.py` |
+
+Si el workflow existente tiene `SONAR_TOKEN` o `SONAR_HOST_URL` como secrets/variables de repo, verificar que ya existen a nivel org antes de borrarlos del repo:
+
+```bash
+# Verificar que el secret de org llega al repo
+gh secret list --repo trycore-co/<nombre-repo>   # debe aparecer SONAR_TOKEN como "org" source
+```
+
+---
+
+### 16.7.2 Paso a paso
+
+**Paso 1 — Reemplazar el contenido del workflow**
+
+```bash
+# Dentro del repo a migrar, en la rama donde vas a trabajar
+cat > .github/workflows/pr-check-<nombre-servicio>.yml << 'EOF'
+name: PR Check — <Nombre Servicio>
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - develop
+      - main
+      - 'release/**'
+    paths:
+      - '<service-dir>/**'
+
+jobs:
+  check:
+    uses: trycore-co/.github/.github/workflows/reusable-pr-check-python.yml@main
+    permissions:
+      checks: write
+      contents: read
+      security-events: write
+      actions: read
+    with:
+      service-dir: <service-dir>
+      sonar-project-key: <sonar-project-key>
+      sonar-project-name: <Sonar Project Name>
+      python-version: '3.11'
+      has-tests: true
+      tests-continue-on-error: false
+    secrets: inherit
+EOF
+```
+
+Ajustar los 6 valores marcados con `<>` usando el inventario del §16.7.1. Si el servicio no tiene tests: `has-tests: false` y eliminar `tests-continue-on-error`.
+
+**Paso 2 — Eliminar el workflow viejo** (si el archivo era uno solo y se reemplazó in-place, este paso no aplica)
+
+```bash
+git rm .github/workflows/pr-check-<nombre>-old.yml   # solo si había un archivo separado
+```
+
+**Paso 3 — Commit y push a la rama feature**
+
+```bash
+git add .github/workflows/pr-check-<nombre-servicio>.yml
+git commit -m "ci: migrar pr-check a reusable workflow de org"
+git push origin <rama>
+```
+
+**Paso 4 — Validar que no hay `startup_failure`**
+
+```bash
+# Esperar 5 segundos para que GitHub indexe el nuevo workflow
+gh workflow run pr-check-<nombre-servicio>.yml --ref <rama>
+sleep 10
+gh run list --workflow=pr-check-<nombre-servicio>.yml --limit=1
+```
+
+Si el resultado es `startup_failure` en menos de 5 segundos: revisar §16.6.1. Los dos culpables más comunes son `permissions:` faltante en el job caller o que el reusable workflow no está en `main` del org repo.
+
+Si el resultado es `in_progress`: el wrapper está corriendo correctamente. Esperar a que termine.
+
+**Paso 5 — Opcional: limpiar secrets/variables de repo**
+
+Si `SONAR_TOKEN` existía a nivel de repo, eliminarlo para no tener duplicados (el org-level lo cubre):
+
+```
+GitHub → <repo> → Settings → Secrets and variables → Actions → eliminar SONAR_TOKEN de repo
+```
+
+---
+
+### 16.7.3 Informes que genera el pipeline — qué esperar ver
+
+Una vez migrado, cada ejecución produce tres bloques de informes en la pestaña **Summary** del workflow run y una anotación en el PR.
+
+**1 — Unit Tests (JUnit)**
+
+Generado por `mikepenz/action-junit-report@v4`. Aparece como check independiente en el PR ("Unit Tests — \<Nombre\>") con el detalle de tests pasados/fallidos.
+
+```
+✓ 42 tests passed
+✗  3 tests failed
+  └── test_event_producer.py::test_publish_timeout — AssertionError
+```
+
+Solo aparece si `has-tests: true`. Si el paso de pytest falla y `tests-continue-on-error: false`, este check marca el PR como bloqueado.
+
+**2 — SonarQube Summary**
+
+Aparece en el Step Summary de Actions con esta tabla:
+
+```markdown
+## 🔍 SonarQube — ✅ PASSED
+
+| Métrica            | Valor  | Umbral       |
+|--------------------|--------|--------------|
+| Quality Gate       | ✅ PASSED | —          |
+| Coverage           | 87.3%  | ≥ 80%       |
+| Duplicaciones      | 1.2%   | ≤ 3%        |
+| Bugs               | 0      | 0 críticos  |
+| Vulnerabilidades   | 0      | 0 críticas  |
+| Code Smells        | 4      | —           |
+| Security Hotspots  | 0      | 0 sin revisar|
+
+[📊 Ver análisis completo en SonarQube](https://...)
+```
+
+Si `has-tests: false`, la fila de Coverage se reemplaza por una nota informativa. El Quality Gate aparece como `❌ FAILED` si algún umbral se supera, lo que bloquea el merge.
+
+**3 — Trivy SCA**
+
+Aparece en el Step Summary justo después de SonarQube:
+
+```markdown
+## 🛡️ SCA — Trivy — ✅ Sin vulnerabilidades CRITICAL/HIGH
+
+| Severidad     | Vulnerabilidades encontradas |
+|---------------|------------------------------|
+| 🔴 Critical   | 0                            |
+| 🟠 High       | 0                            |
+| 🟡 Medium     | 3                            |
+
+> Solo aplica a dependencias con fix disponible. Modo informativo — no bloquea el pipeline.
+```
+
+El reporte completo en formato tabla se sube como artefacto (`trivy-sca-report-<service-dir>-<run-id>`) disponible por 30 días en la pestaña **Artifacts** del run.
+
+**Artefactos descargables:**
+
+| Artefacto | Contenido | Retención |
+|---|---|---|
+| `trivy-sca-report-<servicio>-<run-id>` | Tabla de vulnerabilidades con CVE, paquete afectado y versión con fix | 30 días |
+
+---
+
+### 16.7.4 Checklist de migración
+
+```
+[ ] Inventariar parámetros del workflow viejo (§16.7.1)
+[ ] Verificar que SONAR_TOKEN existe como secret de organización
+[ ] Reemplazar el archivo con el wrapper de §16.7.2
+[ ] Incluir el bloque permissions: en el job check (obligatorio — ver §16.6.1)
+[ ] Push a rama feature y ejecutar workflow_dispatch manual
+[ ] Confirmar que NO aparece startup_failure (debe ser in_progress o success)
+[ ] Confirmar que los 3 bloques de informes aparecen en el Step Summary
+[ ] Confirmar que el artefacto trivy-sca-report-* se generó en Artifacts
+[ ] Si SONAR_TOKEN existía en repo: eliminarlo (el de org lo cubre)
+[ ] Merge a develop/main cuando el primer run sea exitoso
+```
 
 ---
 
