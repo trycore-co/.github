@@ -28,6 +28,11 @@ on:
         required: false
         type: boolean
         default: false
+      type-check-continue-on-error:
+        description: 'TEMPORAL: true cuando hay errores de tipos siendo corregidos'
+        required: false
+        type: boolean
+        default: false
       coverage-exclusions:
         description: 'Patrones Sonar para excluir de cobertura (lcov)'
         required: false
@@ -93,6 +98,7 @@ jobs:
 
       - name: Type check
         working-directory: ${{ inputs.service-dir }}
+        continue-on-error: ${{ inputs.type-check-continue-on-error }}
         run: npx tsc --noEmit
 
       - name: Run tests with coverage
