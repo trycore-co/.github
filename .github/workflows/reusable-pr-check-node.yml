@@ -3,6 +3,11 @@ name: Reusable — PR Check Node.js / React Service
 on:
   workflow_call:
     inputs:
+      service-dir:
+        description: 'Directorio del servicio. Usar "." para repos de un solo servicio.'
+        required: false
+        type: string
+        default: '.'
       sonar-project-key:
         required: true
         type: string
@@ -28,6 +33,21 @@ on:
         required: false
         type: string
         default: 'src/main.tsx,src/App.tsx'
+      has-e2e:
+        description: 'true si el proyecto tiene suite de tests E2E (Playwright)'
+        required: false
+        type: boolean
+        default: false
+      e2e-firebase-project-id:
+        description: 'VITE_FIREBASE_PROJECT_ID para los tests E2E'
+        required: false
+        type: string
+        default: ''
+      e2e-firebase-auth-domain:
+        description: 'VITE_FIREBASE_AUTH_DOMAIN para los tests E2E'
+        required: false
+        type: string
+        default: ''
     secrets:
       SONAR_TOKEN:
         required: true
@@ -41,11 +61,17 @@ jobs:
     permissions:
       checks: write
       contents: read
+      security-events: write
+      actions: read
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Sanitizar project key para nombre de artefactos
+        id: artifact
+        run: echo "key=$(echo '${{ inputs.sonar-project-key }}' | tr ':' '-')" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -61,13 +87,16 @@ jobs:
           restore-keys: ${{ runner.os }}-sonar
 
       - name: Install dependencies
+        working-directory: ${{ inputs.service-dir }}
         run: npm ci
 
       - name: Type check
+        working-directory: ${{ inputs.service-dir }}
         run: npx tsc --noEmit
 
       - name: Run tests with coverage
         if: ${{ inputs.has-tests }}
+        working-directory: ${{ inputs.service-dir }}
         continue-on-error: ${{ inputs.tests-continue-on-error }}
         run: npm run test -- --reporter=verbose --reporter=junit --outputFile=test-results.xml --coverage --pool=vmForks
 
@@ -81,7 +110,7 @@ jobs:
         uses: mikepenz/action-junit-report@v4
         if: ${{ inputs.has-tests }}
         with:
-          report_paths: 'test-results.xml'
+          report_paths: '${{ inputs.service-dir }}/test-results.xml'
           check_name: 'Unit Tests — ${{ inputs.sonar-project-name }}'
           fail_on_failure: false
           annotate_only: ${{ inputs.tests-continue-on-error }}
@@ -93,9 +122,10 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
         with:
+          projectBaseDir: ${{ inputs.service-dir }}
           args: >
             -Dsonar.projectKey=${{ inputs.sonar-project-key }}
-            -Dsonar.projectName="${{ inputs.sonar-project-name }}"
+            -Dsonar.projectName=${{ inputs.sonar-project-name }}
             -Dsonar.sources=src
             -Dsonar.exclusions=src/test/**,**/*.test.{ts,tsx}
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
@@ -104,6 +134,7 @@ jobs:
 
       - name: Resumen SonarQube en Actions
         if: always()
+        working-directory: ${{ inputs.service-dir }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
@@ -171,13 +202,65 @@ jobs:
 
       - name: Quality Gate
         uses: sonarsource/sonarqube-quality-gate-action@master
-        continue-on-error: true
         timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        with:
+          scanMetadataReportFile: ${{ inputs.service-dir }}/.scannerwork/report-task.txt
 
-  # ── 2. SCA: Trivy ───────────────────────────────────────────────────────────
+  # ── 2. E2E Tests: Playwright ────────────────────────────────────────────────
+  e2e-tests:
+    name: E2E Tests — Playwright
+    if: ${{ inputs.has-e2e }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        working-directory: ${{ inputs.service-dir }}
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: ${{ inputs.service-dir }}
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        working-directory: ${{ inputs.service-dir }}
+        run: npx playwright test --reporter=html
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          VITE_DEV_AUTH: 'true'
+          VITE_FIREBASE_API_KEY: demo-e2e-key
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ inputs.e2e-firebase-auth-domain }}
+          VITE_FIREBASE_PROJECT_ID: ${{ inputs.e2e-firebase-project-id }}
+          VITE_NOTIFICATION_POLL_INTERVAL: '999999'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-${{ inputs.sonar-project-key }}-${{ github.run_id }}
+          path: ${{ inputs.service-dir }}/playwright-report/
+          retention-days: 30
+
+      - name: Resumen E2E Tests en Actions
+        if: always()
+        run: |
+          echo "## 🎭 E2E Tests — Playwright" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ E2E test suite completed" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 3. SCA: Trivy ───────────────────────────────────────────────────────────
   sca-trivy:
     name: SCA — Trivy
     runs-on: ubuntu-latest
@@ -190,7 +273,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Sanitizar project key para nombre de artefactos
+        id: artifact
+        run: echo "key=$(echo '${{ inputs.sonar-project-key }}' | tr ':' '-')" >> "$GITHUB_OUTPUT"
+
       - name: Trivy — escanear y guardar tabla
+        working-directory: ${{ inputs.service-dir }}
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
@@ -229,13 +317,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: trivy-sca-report-${{ inputs.sonar-project-key }}-${{ github.run_id }}
-          path: trivy-table.txt
+          name: trivy-sca-report-${{ steps.artifact.outputs.key }}-${{ github.run_id }}
+          path: ${{ inputs.service-dir }}/trivy-table.txt
           retention-days: 30
 
-  # ── 3. SCA: npm audit (OWASP A06) ───────────────────────────────────────────
-  # Complementa Trivy: usa el advisory database oficial de npm, más preciso
-  # para CVEs del ecosistema JavaScript. CRITICAL bloquea el merge; HIGH es informativo.
+  # ── 4. SCA: npm audit (OWASP A06) ───────────────────────────────────────────
+  # Complementa Trivy con el advisory database oficial de npm.
+  # CRITICAL bloquea el merge; HIGH es informativo.
   sca-npm-audit:
     name: SCA — npm audit (OWASP A06)
     runs-on: ubuntu-latest
@@ -246,6 +334,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Sanitizar project key para nombre de artefactos
+        id: artifact
+        run: echo "key=$(echo '${{ inputs.sonar-project-key }}' | tr ':' '-')" >> "$GITHUB_OUTPUT"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -253,10 +345,12 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
+        working-directory: ${{ inputs.service-dir }}
         run: npm ci
 
       - name: npm audit — escanear dependencias
         id: npm_audit
+        working-directory: ${{ inputs.service-dir }}
         run: |
           npm audit --json > npm-audit.json 2>/dev/null || true
 
@@ -310,8 +404,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: npm-audit-report-${{ inputs.sonar-project-key }}-${{ github.run_id }}
-          path: npm-audit.json
+          name: npm-audit-report-${{ steps.artifact.outputs.key }}-${{ github.run_id }}
+          path: ${{ inputs.service-dir }}/npm-audit.json
           retention-days: 30
 
       - name: Bloquear merge si hay vulnerabilidades CRITICAL

@@ -23,7 +23,7 @@ on:
         type: string
         default: 'app'
       cov-dirs:
-        description: 'Directorios para pytest --cov (ej: src o app)'
+        description: 'Directorios para pytest --cov separados por coma (ej: src o app)'
         required: false
         type: string
         default: 'app'
@@ -67,6 +67,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Sanitizar project key para nombre de artefactos
+        id: artifact
+        run: echo "key=$(echo '${{ inputs.sonar-project-key }}' | tr ':' '-')" >> "$GITHUB_OUTPUT"
+
       - name: Setup Python
         if: ${{ inputs.has-tests }}
         uses: actions/setup-python@v5
@@ -91,14 +95,17 @@ jobs:
         if: ${{ inputs.has-tests }}
         working-directory: ${{ inputs.service-dir }}
         continue-on-error: ${{ inputs.tests-continue-on-error }}
+        # Env vars con defaults genéricos para servicios Python con Firebase/Redis.
+        # Proyectos con valores distintos deben definirlos como GitHub repository variables
+        # (TEST_FIREBASE_PROJECT_ID, TEST_FIRESTORE_EMULATOR_HOST, etc.).
         env:
           DEV_AUTH: "true"
-          FIREBASE_PROJECT_ID: "docfly-front"
-          FIRESTORE_EMULATOR_HOST: "localhost:8686"
-          FIREBASE_AUTH_EMULATOR_HOST: "localhost:9099"
+          FIREBASE_PROJECT_ID: ${{ vars.TEST_FIREBASE_PROJECT_ID || 'test-project' }}
+          FIRESTORE_EMULATOR_HOST: ${{ vars.TEST_FIRESTORE_EMULATOR_HOST || 'localhost:8686' }}
+          FIREBASE_AUTH_EMULATOR_HOST: ${{ vars.TEST_FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099' }}
           REDIS_HOST: "localhost"
           REDIS_PORT: "6379"
-          ALLOWED_ORIGINS: "http://localhost:5173"
+          ALLOWED_ORIGINS: ${{ vars.TEST_ALLOWED_ORIGINS || 'http://localhost:5173' }}
           TRUSTED_PROXY_COUNT: "0"
         run: |
           COV_ARGS=""
@@ -278,6 +285,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: trivy-sca-report-${{ inputs.sonar-project-key }}-${{ github.run_id }}
+          name: trivy-sca-report-${{ steps.artifact.outputs.key }}-${{ github.run_id }}
           path: ${{ inputs.service-dir }}/trivy-table.txt
           retention-days: 30
