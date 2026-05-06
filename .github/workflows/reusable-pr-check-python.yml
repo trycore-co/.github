@@ -47,6 +47,11 @@ on:
         required: false
         type: string
         default: 'app/api/**,app/main.py,app/config.py'
+      test-env-vars:
+        description: 'Variables de entorno para tests (formato KEY=VALUE, una por línea). Definir en el wrapper del repo, no aquí.'
+        required: false
+        type: string
+        default: ''
     secrets:
       SONAR_TOKEN:
         required: true
@@ -91,22 +96,17 @@ jobs:
         working-directory: ${{ inputs.service-dir }}
         run: pip install -r ${{ inputs.requirements-file }}
 
+      - name: Exportar env vars de tests
+        if: ${{ inputs.has-tests && inputs.test-env-vars != '' }}
+        env:
+          TEST_ENV_VARS: ${{ inputs.test-env-vars }}
+        run: |
+          echo "$TEST_ENV_VARS" | grep -v '^#' | grep -v '^[[:space:]]*$' | grep '=' >> "$GITHUB_ENV"
+
       - name: Run unit tests with coverage
         if: ${{ inputs.has-tests }}
         working-directory: ${{ inputs.service-dir }}
         continue-on-error: ${{ inputs.tests-continue-on-error }}
-        # Env vars con defaults genéricos para servicios Python con Firebase/Redis.
-        # Proyectos con valores distintos deben definirlos como GitHub repository variables
-        # (TEST_FIREBASE_PROJECT_ID, TEST_FIRESTORE_EMULATOR_HOST, etc.).
-        env:
-          DEV_AUTH: "true"
-          FIREBASE_PROJECT_ID: ${{ vars.TEST_FIREBASE_PROJECT_ID || 'test-project' }}
-          FIRESTORE_EMULATOR_HOST: ${{ vars.TEST_FIRESTORE_EMULATOR_HOST || 'localhost:8686' }}
-          FIREBASE_AUTH_EMULATOR_HOST: ${{ vars.TEST_FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099' }}
-          REDIS_HOST: "localhost"
-          REDIS_PORT: "6379"
-          ALLOWED_ORIGINS: ${{ vars.TEST_ALLOWED_ORIGINS || 'http://localhost:5173' }}
-          TRUSTED_PROXY_COUNT: "0"
         run: |
           COV_ARGS=""
           for dir in $(echo "${{ inputs.cov-dirs }}" | tr ',' ' '); do
