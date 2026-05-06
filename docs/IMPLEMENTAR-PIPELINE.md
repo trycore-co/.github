@@ -222,6 +222,8 @@ jobs:
 
 **⚠️ El bloque `permissions:` en el job caller es obligatorio** — sin él GitHub falla con `startup_failure` antes de crear cualquier job (§16.6.1).
 
+**⚠️ Regla al escribir el reusable workflow:** no agregar `env:` con valores específicos de tu proyecto en ningún step del reusable. Todo lo que pongas ahí se inyecta en **todos** los repos de la org que usen ese workflow. Si tu proyecto necesita variables de entorno para los tests, defínelas como GitHub repository variables en el repo del proyecto — no en el reusable. Ver §16.6.2 de la guía.
+
 **Fase 3 — Documentar**
 
 6. En `trycore-co/.github/docs/BUENAS-PRACTICAS-PIPELINE.md`, agregar:

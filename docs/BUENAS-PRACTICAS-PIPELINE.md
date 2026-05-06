@@ -59,6 +59,7 @@ Antes de generar el workflow, responde estas preguntas y sustituye los valores e
 14. [OWASP Top 10 — Cobertura por el pipeline](#14-owasp-top-10--cobertura-por-el-pipeline)
 15. [Monorepo con múltiples microservicios](#15-monorepo-con-múltiples-microservicios)
 16. [Distribución org-level y reusable workflows](#16-distribución-org-level--repo-trycore-cogithub)
+    - [16.6.2 Regla — nunca poner env vars de proyecto en un reusable](#1662-regla--nunca-poner-env-vars-de-proyecto-en-un-reusable-workflow)
     - [16.7 Migración de repo existente al wrapper reusable](#167-migración-de-un-repo-existente-al-wrapper-reusable)
 17. [Monorepo front + backend](#17-monorepo-front--backend)
 
@@ -2855,6 +2856,57 @@ gh api repos/<org>/<repo>/actions/runs/<run-id> | python3 -c "import sys,json; [
 Si `total_count: 0`, el problema está en la **definición** del workflow (YAML inválido, permissions faltantes en el caller, o expresión en lugar de valor literal en un campo que no lo admite como `defaults.run.working-directory`).
 
 ---
+
+---
+
+### 16.6.2 Regla — nunca poner env vars de proyecto en un reusable workflow
+
+Un reusable workflow es **infraestructura compartida** — lo usan todos los repos de la org. Cualquier variable de entorno que se agregue al reusable se inyecta en absolutamente todos los proyectos que lo invocan, aunque esos proyectos no usen esa tecnología.
+
+**Está prohibido:**
+
+```yaml
+# ❌ MAL — en reusable-pr-check-python.yml
+- name: Run unit tests with coverage
+  env:
+    FIREBASE_PROJECT_ID: "mi-proyecto"      # config específica de un proyecto
+    FIRESTORE_EMULATOR_HOST: "localhost:8686"
+    REDIS_HOST: "localhost"
+```
+
+Aunque se use fallback con variables de org (`${{ vars.ALGO || 'default' }}`), el problema persiste: la variable se inyecta en todos los proyectos con un valor por defecto que puede interferir con sus tests o enmascarar errores de configuración.
+
+**La solución correcta: env vars del proyecto van en el wrapper del repo del proyecto**
+
+```yaml
+# ✅ BIEN — en .github/workflows/pr-check-mi-servicio.yml (en el repo del proyecto)
+jobs:
+  check:
+    uses: trycore-co/.github/.github/workflows/reusable-pr-check-python.yml@main
+    permissions:
+      checks: write
+      contents: read
+      security-events: write
+      actions: read
+    with:
+      service-dir: mi-servicio
+      sonar-project-key: mi-servicio
+      sonar-project-name: Mi Servicio
+      python-version: '3.11'
+      has-tests: true
+    secrets: inherit
+    # Las env vars propias del proyecto se manejan como GitHub repository variables/secrets
+    # y se referencian directamente desde el código de tests — no se pasan al reusable
+```
+
+Si el proyecto necesita variables de entorno para correr sus tests localmente o en CI, la solución es:
+
+1. Definirlas como **GitHub repository variables** (`Settings → Secrets and variables → Variables`) en el repo del proyecto
+2. El código de tests las lee con `os.getenv("MI_VAR")` — sin necesidad de declararlas en el workflow
+
+Si son secretos (tokens, passwords): usar **GitHub repository secrets** y pasarlos con `secrets: inherit`.
+
+**Señal de alerta:** si al modificar el reusable workflow sientes que necesitas agregar una `env:` con un valor específico de tu proyecto, es una señal de que la configuración va en el wrapper del repo, no en el reusable.
 
 ---
 
