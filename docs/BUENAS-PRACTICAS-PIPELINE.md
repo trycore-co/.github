@@ -2376,6 +2376,8 @@ jobs:
 
 7. **Convención de nombres de rama:** el equipo usa `feature/` no `feat/`. Definir la convención en el CLAUDE.md del repo desde el inicio para que la IA no genere nombres incorrectos.
 
+8. **Al migrar a reusable workflows, el caller debe declarar los mismos `permissions` que el reusable:** si el reusable workflow tiene `permissions: checks: write, security-events: write` en su job y el wrapper caller no los declara, GitHub falla con `startup_failure` antes de crear cualquier job. El síntoma es idéntico al de un error de YAML — 1-3 segundos, sin logs. Ver §16.6.1 para el diagnóstico completo y el fix.
+
 ---
 
 ## 16. Distribución org-level — repo `trycore-co/.github`
@@ -2730,6 +2732,11 @@ on:
 jobs:
   check:
     uses: trycore-co/.github/.github/workflows/reusable-pr-check-python.yml@main
+    permissions:
+      checks: write
+      contents: read
+      security-events: write
+      actions: read
     with:
       service-dir: validation-service
       sonar-project-key: validation-service
@@ -2739,6 +2746,8 @@ jobs:
       tests-continue-on-error: true   # TEMPORAL — remover cuando se corrijan los tests
     secrets: inherit
 ```
+
+> ⚠️ **`permissions:` es obligatorio en el caller.** Cuando el reusable workflow declara `permissions:` a nivel de job, GitHub exige que el caller también declare esos mismos permisos — de lo contrario falla con `startup_failure` antes de crear cualquier job. Ver §16.6.1 para el detalle.
 
 **`secrets: inherit`** — pasa TODOS los secrets del repo/org al reusable workflow, incluyendo `SONAR_TOKEN`. No hay que declararlos explícitamente.
 
@@ -2791,6 +2800,56 @@ git push origin main
 - El servicio usa un stack diferente (Java, Node.js) — crear un reusable workflow específico para ese stack
 - El servicio tiene un proceso de instalación muy distinto (ej. LibreOffice para pdf-generator) — puede valer la pena un input extra o un workflow propio
 - Se necesita mayor control sobre cada step para depurar un problema — temporalmente volver al workflow expandido hasta resolver
+
+---
+
+### 16.6.1 Lección aprendida — `startup_failure` por permissions en reusable workflows
+
+**Síntoma:** todos los workflows fallan en 1-3 segundos con `startup_failure`. `gh run view` muestra `jobs: []` — ningún job se crea.
+
+**Causa:** GitHub valida en startup que el **caller** tenga declarados los mismos `permissions` que el reusable workflow solicita a nivel de job. Si el reusable workflow tiene:
+
+```yaml
+jobs:
+  check:
+    permissions:
+      checks: write
+      security-events: write
+      ...
+```
+
+…y el caller no declara esos permisos en su job, GitHub rechaza la ejecución antes de crear cualquier job. No hay logs de error disponibles — solo `startup_failure`.
+
+**Fix:** declarar los mismos permisos en el job del **caller**:
+
+```yaml
+jobs:
+  check:
+    uses: trycore-co/.github/.github/workflows/reusable-pr-check-python.yml@main
+    permissions:          # ← OBLIGATORIO cuando el reusable declara permissions
+      checks: write
+      contents: read
+      security-events: write
+      actions: read
+    with:
+      ...
+    secrets: inherit
+```
+
+**Regla:** si el reusable workflow tiene `permissions:` en el job, el caller siempre debe tenerlos también. El bloque del wrapper crece de 20 a 25 líneas, pero es obligatorio.
+
+**Cómo diagnosticar `startup_failure` en general:**
+
+```bash
+# Ver si se crearon jobs
+gh api repos/<org>/<repo>/actions/runs/<run-id>/jobs | python3 -c "import sys,json; print(json.load(sys.stdin)['total_count'])"
+# Si es 0 → startup_failure real (GitHub rechazó el workflow antes de empezar)
+
+# Ver qué SHA del reusable se usó
+gh api repos/<org>/<repo>/actions/runs/<run-id> | python3 -c "import sys,json; [print(w) for w in json.load(sys.stdin).get('referenced_workflows',[])]"
+```
+
+Si `total_count: 0`, el problema está en la **definición** del workflow (YAML inválido, permissions faltantes en el caller, o expresión en lugar de valor literal en un campo que no lo admite como `defaults.run.working-directory`).
 
 ---
 
