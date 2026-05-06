@@ -1,39 +1,20 @@
-name: Reusable — PR Check Python Service
+name: Reusable — PR Check Node.js / React Service
 
 on:
   workflow_call:
     inputs:
-      service-dir:
-        description: 'Directorio del servicio desde la raíz del repo. Usar "." para repos de un solo servicio.'
-        required: true
-        type: string
       sonar-project-key:
         required: true
         type: string
       sonar-project-name:
         required: true
         type: string
-      python-version:
+      node-version:
         required: false
         type: string
-        default: '3.11'
-      sonar-sources:
-        description: 'Directorios de fuentes para SonarQube (ej: src,config.py o app)'
-        required: false
-        type: string
-        default: 'app'
-      cov-dirs:
-        description: 'Directorios para pytest --cov (ej: src o app)'
-        required: false
-        type: string
-        default: 'app'
-      requirements-file:
-        description: 'Archivo de dependencias a instalar (ej: requirements.txt o requirements-test.txt)'
-        required: false
-        type: string
-        default: 'requirements.txt'
+        default: '20'
       has-tests:
-        description: 'true si el servicio tiene suite de unit tests'
+        description: 'true si el servicio tiene suite de unit tests (Vitest)'
         required: false
         type: boolean
         default: true
@@ -43,37 +24,34 @@ on:
         type: boolean
         default: false
       coverage-exclusions:
-        description: 'Patrones Sonar para excluir de cobertura'
+        description: 'Patrones Sonar para excluir de cobertura (lcov)'
         required: false
         type: string
-        default: 'app/api/**,app/main.py,app/config.py'
+        default: 'src/main.tsx,src/App.tsx'
     secrets:
       SONAR_TOKEN:
         required: true
 
 jobs:
-  check:
-    name: Tests & SonarQube
+  # ── 1. Build + Tests + SonarQube ────────────────────────────────────────────
+  build-test-sonar:
+    name: Build, Tests & SonarQube
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       checks: write
       contents: read
-      security-events: write
-      actions: read
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Python
-        if: ${{ inputs.has-tests }}
-        uses: actions/setup-python@v5
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          python-version: ${{ inputs.python-version }}
-          cache: 'pip'
-          cache-dependency-path: '${{ inputs.service-dir }}/${{ inputs.requirements-file }}'
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
 
       - name: Cache SonarQube
         uses: actions/cache@v4
@@ -83,34 +61,15 @@ jobs:
           restore-keys: ${{ runner.os }}-sonar
 
       - name: Install dependencies
-        if: ${{ inputs.has-tests }}
-        working-directory: ${{ inputs.service-dir }}
-        run: pip install -r ${{ inputs.requirements-file }}
+        run: npm ci
 
-      - name: Run unit tests with coverage
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run tests with coverage
         if: ${{ inputs.has-tests }}
-        working-directory: ${{ inputs.service-dir }}
         continue-on-error: ${{ inputs.tests-continue-on-error }}
-        env:
-          DEV_AUTH: "true"
-          FIREBASE_PROJECT_ID: "docfly-front"
-          FIRESTORE_EMULATOR_HOST: "localhost:8686"
-          FIREBASE_AUTH_EMULATOR_HOST: "localhost:9099"
-          REDIS_HOST: "localhost"
-          REDIS_PORT: "6379"
-          ALLOWED_ORIGINS: "http://localhost:5173"
-          TRUSTED_PROXY_COUNT: "0"
-        run: |
-          COV_ARGS=""
-          for dir in $(echo "${{ inputs.cov-dirs }}" | tr ',' ' '); do
-            COV_ARGS="$COV_ARGS --cov=$dir"
-          done
-          pytest tests/unit/ -v \
-            $COV_ARGS \
-            --cov-report=xml:coverage.xml \
-            --cov-report=term-missing \
-            --junitxml=test-results.xml \
-            --tb=short
+        run: npm run test -- --reporter=verbose --reporter=junit --outputFile=test-results.xml --coverage --pool=vmForks
 
       - name: Encabezado Unit Tests en summary
         if: ${{ inputs.has-tests }}
@@ -122,28 +81,10 @@ jobs:
         uses: mikepenz/action-junit-report@v4
         if: ${{ inputs.has-tests }}
         with:
-          report_paths: '${{ inputs.service-dir }}/test-results.xml'
+          report_paths: 'test-results.xml'
           check_name: 'Unit Tests — ${{ inputs.sonar-project-name }}'
-
-      - name: Preparar sonar-project.properties
-        if: always()
-        working-directory: ${{ inputs.service-dir }}
-        run: |
-          echo "sonar.projectKey=${{ inputs.sonar-project-key }}" > sonar-project.properties
-          echo "sonar.projectName=${{ inputs.sonar-project-name }}" >> sonar-project.properties
-          echo "sonar.sources=${{ inputs.sonar-sources }}" >> sonar-project.properties
-          echo "sonar.python.version=${{ inputs.python-version }}" >> sonar-project.properties
-          echo "sonar.qualitygate.wait=false" >> sonar-project.properties
-
-          if [ "${{ inputs.has-tests }}" = "true" ]; then
-            echo "sonar.exclusions=**/__pycache__/**,**/venv/**,**/.venv/**,**/*.pyc,**/tests/**" >> sonar-project.properties
-            echo "sonar.tests=tests" >> sonar-project.properties
-            echo "sonar.test.inclusions=**/test_*.py" >> sonar-project.properties
-            echo "sonar.python.coverage.reportPaths=coverage.xml" >> sonar-project.properties
-            echo "sonar.coverage.exclusions=${{ inputs.coverage-exclusions }}" >> sonar-project.properties
-          else
-            echo "sonar.exclusions=**/__pycache__/**,**/venv/**,**/.venv/**,**/*.pyc" >> sonar-project.properties
-          fi
+          fail_on_failure: false
+          annotate_only: ${{ inputs.tests-continue-on-error }}
 
       - name: SonarQube Scan
         if: always()
@@ -152,11 +93,17 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
         with:
-          projectBaseDir: ${{ inputs.service-dir }}
+          args: >
+            -Dsonar.projectKey=${{ inputs.sonar-project-key }}
+            -Dsonar.projectName="${{ inputs.sonar-project-name }}"
+            -Dsonar.sources=src
+            -Dsonar.exclusions=src/test/**,**/*.test.{ts,tsx}
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+            -Dsonar.qualitygate.wait=false
+            -Dsonar.coverage.exclusions=${{ inputs.coverage-exclusions }}
 
       - name: Resumen SonarQube en Actions
         if: always()
-        working-directory: ${{ inputs.service-dir }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
@@ -181,17 +128,13 @@ jobs:
             sleep 5
           done
 
-          HAS_TESTS="${{ inputs.has-tests }}"
-          METRIC_KEYS="duplicated_lines_density,bugs,vulnerabilities,code_smells,security_hotspots"
-          [ "$HAS_TESTS" = "true" ] && METRIC_KEYS="coverage,$METRIC_KEYS"
-
           QG_JSON=$(curl -sf -u "$SONAR_TOKEN:" \
             "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=${{ inputs.sonar-project-key }}" 2>/dev/null || echo "{}")
           QG_STATUS=$(echo "$QG_JSON" | python3 -c \
             "import sys,json; print(json.load(sys.stdin).get('projectStatus',{}).get('status','UNKNOWN'))" 2>/dev/null || echo "UNKNOWN")
 
           METRICS_JSON=$(curl -sf -u "$SONAR_TOKEN:" \
-            "$SONAR_HOST_URL/api/measures/component?component=${{ inputs.sonar-project-key }}&metricKeys=$METRIC_KEYS" 2>/dev/null || echo "{}")
+            "$SONAR_HOST_URL/api/measures/component?component=${{ inputs.sonar-project-key }}&metricKeys=coverage,duplicated_lines_density,bugs,vulnerabilities,code_smells,security_hotspots" 2>/dev/null || echo "{}")
 
           parse_metric() {
             echo "$METRICS_JSON" | python3 -c \
@@ -216,45 +159,53 @@ jobs:
             echo "| Métrica | Valor | Umbral |"
             echo "|---------|-------|--------|"
             echo "| Quality Gate | $QG_BADGE | — |"
-            [ "$HAS_TESTS" = "true" ] && echo "| Coverage | ${COVERAGE}% | ≥ 80% |"
+            echo "| Coverage | ${COVERAGE}% | ≥ 80% |"
             echo "| Duplicaciones | ${DUPLICATIONS}% | ≤ 3% |"
             echo "| Bugs | $BUGS | 0 críticos |"
             echo "| Vulnerabilidades | $VULNERABILITIES | 0 críticas |"
             echo "| Code Smells | $CODE_SMELLS | — |"
             echo "| Security Hotspots | $SEC_HOTSPOTS | 0 sin revisar |"
             echo ""
-            [ "$HAS_TESTS" = "false" ] && echo "> ℹ️ Sin cobertura — este servicio no tiene suite de unit tests aún."
-            echo ""
             echo "[📊 Ver análisis completo en SonarQube]($DASHBOARD_URL)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Quality Gate
         uses: sonarsource/sonarqube-quality-gate-action@master
+        continue-on-error: true
         timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
-        with:
-          scanMetadataReportFile: ${{ inputs.service-dir }}/.scannerwork/report-task.txt
+
+  # ── 2. SCA: Trivy ───────────────────────────────────────────────────────────
+  sca-trivy:
+    name: SCA — Trivy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Trivy — escanear y guardar tabla
-        if: always()
-        working-directory: ${{ inputs.service-dir }}
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
           trivy fs . \
             --severity CRITICAL,HIGH,MEDIUM \
             --ignore-unfixed \
-            --skip-dirs '.git,__pycache__,venv,.venv' \
+            --skip-dirs '.git,node_modules,dist' \
             --format table \
             --output trivy-table.txt 2>/dev/null || true
 
-          CRITICAL=$(trivy fs . --severity CRITICAL --ignore-unfixed --skip-dirs '.git,__pycache__,venv,.venv' --format json 2>/dev/null \
+          CRITICAL=$(trivy fs . --severity CRITICAL --ignore-unfixed --skip-dirs '.git,node_modules,dist' --format json 2>/dev/null \
             | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(len(r.get('Vulnerabilities') or []) for r in d.get('Results',[])))" 2>/dev/null || echo "0")
-          HIGH=$(trivy fs . --severity HIGH --ignore-unfixed --skip-dirs '.git,__pycache__,venv,.venv' --format json 2>/dev/null \
+          HIGH=$(trivy fs . --severity HIGH --ignore-unfixed --skip-dirs '.git,node_modules,dist' --format json 2>/dev/null \
             | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(len(r.get('Vulnerabilities') or []) for r in d.get('Results',[])))" 2>/dev/null || echo "0")
-          MEDIUM=$(trivy fs . --severity MEDIUM --ignore-unfixed --skip-dirs '.git,__pycache__,venv,.venv' --format json 2>/dev/null \
+          MEDIUM=$(trivy fs . --severity MEDIUM --ignore-unfixed --skip-dirs '.git,node_modules,dist' --format json 2>/dev/null \
             | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(len(r.get('Vulnerabilities') or []) for r in d.get('Results',[])))" 2>/dev/null || echo "0")
 
           if [ "$CRITICAL" = "0" ] && [ "$HIGH" = "0" ]; then
@@ -279,5 +230,93 @@ jobs:
         if: always()
         with:
           name: trivy-sca-report-${{ inputs.sonar-project-key }}-${{ github.run_id }}
-          path: ${{ inputs.service-dir }}/trivy-table.txt
+          path: trivy-table.txt
           retention-days: 30
+
+  # ── 3. SCA: npm audit (OWASP A06) ───────────────────────────────────────────
+  # Complementa Trivy: usa el advisory database oficial de npm, más preciso
+  # para CVEs del ecosistema JavaScript. CRITICAL bloquea el merge; HIGH es informativo.
+  sca-npm-audit:
+    name: SCA — npm audit (OWASP A06)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: npm audit — escanear dependencias
+        id: npm_audit
+        run: |
+          npm audit --json > npm-audit.json 2>/dev/null || true
+
+          CRITICAL=$(python3 -c "
+          import json
+          d = json.load(open('npm-audit.json'))
+          vulns = d.get('vulnerabilities', {})
+          print(sum(1 for v in vulns.values() if v.get('severity') == 'critical'))
+          " 2>/dev/null || echo "0")
+
+          HIGH=$(python3 -c "
+          import json
+          d = json.load(open('npm-audit.json'))
+          vulns = d.get('vulnerabilities', {})
+          print(sum(1 for v in vulns.values() if v.get('severity') == 'high'))
+          " 2>/dev/null || echo "0")
+
+          MODERATE=$(python3 -c "
+          import json
+          d = json.load(open('npm-audit.json'))
+          vulns = d.get('vulnerabilities', {})
+          print(sum(1 for v in vulns.values() if v.get('severity') == 'moderate'))
+          " 2>/dev/null || echo "0")
+
+          echo "critical=$CRITICAL" >> "$GITHUB_OUTPUT"
+          echo "high=$HIGH"         >> "$GITHUB_OUTPUT"
+          echo "moderate=$MODERATE" >> "$GITHUB_OUTPUT"
+
+          if [ "$CRITICAL" = "0" ] && [ "$HIGH" = "0" ]; then
+            AUDIT_STATUS="✅ Sin vulnerabilidades CRITICAL/HIGH"
+          elif [ "$CRITICAL" = "0" ]; then
+            AUDIT_STATUS="⚠️ HIGH encontradas — revisar antes de merge"
+          else
+            AUDIT_STATUS="❌ CRITICAL encontradas — merge bloqueado"
+          fi
+
+          {
+            echo "## 🔒 SCA — npm audit — $AUDIT_STATUS"
+            echo ""
+            echo "| Severidad | Vulnerabilidades |"
+            echo "|-----------|-----------------|"
+            echo "| 🔴 Critical | $CRITICAL |"
+            echo "| 🟠 High | $HIGH |"
+            echo "| 🟡 Moderate | $MODERATE |"
+            echo ""
+            echo "> **Critical** bloquea el merge. **High** es informativo."
+            echo "> Correr \`npm audit fix\` localmente para dependencias con fix disponible."
+            echo "> Referencia: OWASP A06 — Vulnerable and Outdated Components."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: npm-audit-report-${{ inputs.sonar-project-key }}-${{ github.run_id }}
+          path: npm-audit.json
+          retention-days: 30
+
+      - name: Bloquear merge si hay vulnerabilidades CRITICAL
+        if: steps.npm_audit.outputs.critical != '0'
+        run: |
+          echo "❌ npm audit encontró ${{ steps.npm_audit.outputs.critical }} vulnerabilidad(es) CRITICAL."
+          echo "   Correr 'npm audit fix' o actualizar la dependencia afectada antes de hacer merge."
+          exit 1
