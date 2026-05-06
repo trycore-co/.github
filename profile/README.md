@@ -5,6 +5,7 @@ Consultoría de software especializada en arquitecturas modernas: microservicios
 ## Estándares de ingeniería
 
 - [Guía de Pipelines CI/CD](https://github.com/trycore-co/.github/blob/main/docs/BUENAS-PRACTICAS-PIPELINE.md) — GitHub Actions · SonarQube · Trivy
+- [Implementar Pipeline en un repo](https://github.com/trycore-co/.github/blob/main/docs/IMPLEMENTAR-PIPELINE.md) — prompts listos para IA · árbol de decisión · casos nuevo vs migración
 
 ## Stack habitual
 

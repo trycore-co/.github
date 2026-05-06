@@ -7,6 +7,8 @@
 ## Guía para IA — Cómo generar un workflow desde este documento
 
 > **Contexto org trycore-co:** `SONAR_TOKEN` y `SONAR_HOST_URL` ya están configurados como secret y variable de organización respectivamente — **no se configuran por repo**. Para nuevos proyectos Python en la org, usar el wrapper de §16.4 (20 líneas) en lugar de copiar el template completo de §5. Para otros stacks (Java, React, Angular) seguir usando los templates de §4/§6/§7 por ahora — los reusable workflows para esos stacks están pendientes.
+>
+> **¿Vas a implementar el pipeline en un repo nuevo o a migrar uno existente?** Usa la [Guía de Implementación](IMPLEMENTAR-PIPELINE.md) — tiene los prompts listos para darle a una IA y el árbol de decisión para saber qué caso aplica.
 
 Antes de generar el workflow, responde estas preguntas y sustituye los valores en el template:
 
