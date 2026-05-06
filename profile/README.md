@@ -15,4 +15,4 @@ Consultoría de software especializada en arquitecturas modernas: microservicios
 
 ## Contacto
 
-[trycore.com.co](https://trycore.com.co) · hola@trycore.com.co
+[trycore.com.co](https://trycore.com.co) · infraestructura@trycore.com
