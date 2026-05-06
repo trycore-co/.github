@@ -1,20 +1,9 @@
-name: Test — Reusable Hello v4
+name: Test — Reusable Hello v5
 
 on:
   workflow_call:
     inputs:
-      has-tests:
-        required: false
-        type: boolean
-        default: true
-      tests-continue-on-error:
-        required: false
-        type: boolean
-        default: false
       service-dir:
-        required: true
-        type: string
-      sonar-project-key:
         required: true
         type: string
     secrets:
@@ -34,36 +23,4 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Fake test step
-        if: ${{ inputs.has-tests }}
-        working-directory: ${{ inputs.service-dir }}
-        continue-on-error: ${{ inputs.tests-continue-on-error }}
-        run: echo "tests ok"
-
-      - name: Publicar resultados de tests
-        uses: mikepenz/action-junit-report@v4
-        if: ${{ inputs.has-tests }}
-        with:
-          report_paths: '${{ inputs.service-dir }}/test-results.xml'
-          check_name: 'Unit Tests — test'
-
-      - name: SonarQube Scan
-        if: always()
-        uses: sonarsource/sonarqube-scan-action@master
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
-        with:
-          projectBaseDir: ${{ inputs.service-dir }}
-
-      - name: Quality Gate
-        uses: sonarsource/sonarqube-quality-gate-action@master
-        timeout-minutes: 5
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
-        with:
-          scanMetadataReportFile: ${{ inputs.service-dir }}/.scannerwork/report-task.txt
+      - run: echo "done in ${{ inputs.service-dir }}"
