@@ -1,4 +1,4 @@
-name: Test — Reusable Hello v5
+name: Test — Reusable Hello v6
 
 on:
   workflow_call:
@@ -14,11 +14,9 @@ jobs:
   test:
     name: Tests & SonarQube
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     permissions:
       checks: write
       contents: read
-      security-events: write
       actions: read
 
     steps:
