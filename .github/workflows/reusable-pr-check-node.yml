@@ -226,10 +226,14 @@ jobs:
             echo "> Solo aplica a dependencias con fix disponible. Modo informativo — no bloquea el pipeline."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Sanitize artifact name
+        if: always()
+        run: echo "ARTIFACT_KEY=$(echo '${{ inputs.sonar-project-key }}' | tr ':' '-')" >> "$GITHUB_ENV"
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: trivy-sca-report-${{ inputs.sonar-project-key }}-${{ github.run_id }}
+          name: trivy-sca-report-${{ env.ARTIFACT_KEY }}-${{ github.run_id }}
           path: trivy-table.txt
           retention-days: 30
 
@@ -307,10 +311,14 @@ jobs:
             echo "> Referencia: OWASP A06 — Vulnerable and Outdated Components."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Sanitize artifact name
+        if: always()
+        run: echo "ARTIFACT_KEY=$(echo '${{ inputs.sonar-project-key }}' | tr ':' '-')" >> "$GITHUB_ENV"
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: npm-audit-report-${{ inputs.sonar-project-key }}-${{ github.run_id }}
+          name: npm-audit-report-${{ env.ARTIFACT_KEY }}-${{ github.run_id }}
           path: npm-audit.json
           retention-days: 30
 
