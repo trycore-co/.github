@@ -154,18 +154,111 @@ Lee específicamente **§16.7** (Migración de repo existente) y **§16.6.1** (s
 
 ---
 
+## Caso 3 — Stack no-Python (Java, React, Angular, Node.js)
+
+**Para el líder:** pide esto cuando el repo usa un stack diferente a Python/FastAPI y no existe todavía un reusable workflow para ese stack en `trycore-co/.github`.
+
+**Diferencia con los casos anteriores:** aquí hay que crear el reusable workflow primero en el repo de la org, y luego sí crear el wrapper en el repo del proyecto. Son dos repos distintos.
+
+**Para la IA 🤖 — copiar y pegar esto en el chat:**
+
+---
+
+Necesito implementar el pipeline de CI/CD para este repositorio. El stack es **[indicar: Java/Maven, React/Vite, Angular, Node.js]**.
+
+Antes de generar cualquier archivo, lee la guía oficial completa en:
+https://github.com/trycore-co/.github/blob/main/docs/BUENAS-PRACTICAS-PIPELINE.md
+
+**Lo que ya existe y NO debes configurar:**
+- `SONAR_TOKEN` ya es secret de organización en `trycore-co`
+- `SONAR_HOST_URL` ya es variable de organización en `trycore-co`
+- El reusable workflow para Python ya existe — **no lo toques**
+
+**Lo que debes hacer — en orden:**
+
+**Fase 1 — Crear el reusable workflow en `trycore-co/.github`**
+
+1. Clonar `git@github.com:trycore-co/.github.git`
+2. Crear `.github/workflows/reusable-pr-check-<stack>.yml` basándote en el template del stack correspondiente de la guía (§4 Java, §6 React/Vite, §7 Angular) pero adaptado a `workflow_call` con los mismos inputs que tiene `reusable-pr-check-python.yml` (ver §16.3 como referencia de estructura)
+3. El reusable workflow debe:
+   - Declarar `on: workflow_call:` con inputs para: `service-dir`, `sonar-project-key`, `sonar-project-name`, y los que apliquen al stack
+   - Declarar `secrets: SONAR_TOKEN: required: true`
+   - Usar `working-directory: ${{ inputs.service-dir }}` en cada step `run:` individualmente — **nunca** en `defaults.run.working-directory` (ver §16.6.1)
+   - Incluir los tres bloques de informes: tests, SonarQube summary y Trivy (ver §3 de la guía para los patrones de cada bloque)
+4. Commit y push a `main` de `trycore-co/.github`
+
+**Fase 2 — Crear el wrapper en este repo**
+
+5. Crear `.github/workflows/pr-check-<nombre>.yml` con ~25 líneas:
+
+```yaml
+name: PR Check — <Nombre>
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - develop
+      - main
+      - 'release/**'
+    paths:
+      - '<service-dir>/**'    # omitir paths si es repo de un solo servicio
+
+jobs:
+  check:
+    uses: trycore-co/.github/.github/workflows/reusable-pr-check-<stack>.yml@main
+    permissions:
+      checks: write
+      contents: read
+      security-events: write
+      actions: read
+    with:
+      service-dir: <service-dir>
+      sonar-project-key: <project-key>
+      sonar-project-name: <Nombre Legible>
+      # inputs adicionales según el stack
+    secrets: inherit
+```
+
+**⚠️ El bloque `permissions:` en el job caller es obligatorio** — sin él GitHub falla con `startup_failure` antes de crear cualquier job (§16.6.1).
+
+**Fase 3 — Documentar**
+
+6. En `trycore-co/.github/docs/BUENAS-PRACTICAS-PIPELINE.md`, agregar:
+   - Una subsección en §16.2 mencionando el nuevo archivo en la estructura del repo org
+   - Una nueva sección §16.X con el reusable workflow completo del nuevo stack, siguiendo el mismo formato que §16.3
+   - Una fila en la tabla de reusable workflows disponibles (si existe)
+
+7. Actualizar la nota al inicio de `BUENAS-PRACTICAS-PIPELINE.md` indicando que el reusable workflow para el nuevo stack ya existe
+
+**Fase 4 — Validar**
+
+8. Ejecutar `gh workflow run pr-check-<nombre>.yml --ref <rama>` desde el repo del proyecto
+9. Confirmar que el resultado es `in_progress` o `success` — nunca `startup_failure` en menos de 5 segundos
+10. Verificar que los tres bloques de informes aparecen en el Step Summary (ver §16.7.3)
+
+---
+
 ## ¿Cuál caso aplica a mi proyecto?
 
 ```
-¿El repo tiene archivos en .github/workflows/?
+¿El stack del repo es Python/FastAPI?
 │
-├── No → Usar Caso 1 (repo nuevo)
+├── Sí → ¿Tiene archivos en .github/workflows/?
+│         │
+│         ├── No  → Caso 1 (repo nuevo Python)
+│         │
+│         └── Sí  → ¿Más de 50 líneas?
+│                   ├── Sí → Caso 2 (migración Python)
+│                   └── No → Ya usa el wrapper, no hacer nada
 │
-└── Sí → ¿Los archivos tienen más de 50 líneas?
+└── No (Java, React, Angular, Node.js...)
           │
-          ├── Sí → Usar Caso 2 (migración)
-          │
-          └── No → Ya usa el wrapper reusable, no hacer nada
+          └── ¿Existe reusable-pr-check-<stack>.yml en trycore-co/.github?
+              │
+              ├── Sí → Caso 1 o 2 adaptando el uses: al stack correcto
+              │
+              └── No → Caso 3 (crear reusable nuevo + wrapper)
 ```
 
 ---
@@ -173,5 +266,6 @@ Lee específicamente **§16.7** (Migración de repo existente) y **§16.6.1** (s
 ## Referencia
 
 - [Guía completa de Buenas Prácticas CI/CD](BUENAS-PRACTICAS-PIPELINE.md) — referencia técnica detallada
+- [§16.3](BUENAS-PRACTICAS-PIPELINE.md#163-reusable-workflow--python-todo-en-uno) — estructura del reusable workflow Python (modelo para otros stacks)
 - [§16.6.1](BUENAS-PRACTICAS-PIPELINE.md#1661-lección-aprendida--startup_failure-por-permissions-en-reusable-workflows) — diagnóstico de `startup_failure`
 - [§16.7](BUENAS-PRACTICAS-PIPELINE.md#167-migración-de-un-repo-existente-al-wrapper-reusable) — guía de migración paso a paso
