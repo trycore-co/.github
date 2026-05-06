@@ -3000,7 +3000,9 @@ Aparece en el Step Summary de Actions con esta tabla:
 [📊 Ver análisis completo en SonarQube](https://...)
 ```
 
-Si `has-tests: false`, la fila de Coverage se reemplaza por una nota informativa. El Quality Gate aparece como `❌ FAILED` si algún umbral se supera, lo que bloquea el merge.
+Si `has-tests: false`, la fila de Coverage **no aparece en la tabla** — en su lugar aparece una nota informativa debajo de ella. El Quality Gate aparece como `❌ FAILED` si algún umbral se supera, lo que bloquea el merge.
+
+> ⚠️ **No insertar texto libre dentro del bloque de tabla markdown.** Un blockquote (`> texto`) dentro de un HEREDOC que contiene una tabla quiebra el renderizado — las filas siguientes se muestran como texto plano. La solución es usar `echo` statements condicionales para construir la tabla y agregar elementos opcionales fuera de ella.
 
 **3 — Trivy SCA**
 
