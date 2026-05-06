@@ -1,4 +1,4 @@
-name: Test — Reusable Hello v3
+name: Test — Reusable Hello v4
 
 on:
   workflow_call:
@@ -14,34 +14,56 @@ on:
       service-dir:
         required: true
         type: string
+      sonar-project-key:
+        required: true
+        type: string
     secrets:
       SONAR_TOKEN:
         required: true
 
 jobs:
   test:
-    name: Hello v3
+    name: Tests & SonarQube
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      checks: write
+      contents: read
+      security-events: write
+      actions: read
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Python
-        if: ${{ inputs.has-tests }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: '${{ inputs.service-dir }}/requirements.txt'
-
       - name: Fake test step
         if: ${{ inputs.has-tests }}
         working-directory: ${{ inputs.service-dir }}
         continue-on-error: ${{ inputs.tests-continue-on-error }}
-        run: echo "running tests"
+        run: echo "tests ok"
 
-      - name: Summary step
+      - name: Publicar resultados de tests
+        uses: mikepenz/action-junit-report@v4
+        if: ${{ inputs.has-tests }}
+        with:
+          report_paths: '${{ inputs.service-dir }}/test-results.xml'
+          check_name: 'Unit Tests — test'
+
+      - name: SonarQube Scan
         if: always()
-        working-directory: ${{ inputs.service-dir }}
-        run: echo "done"
+        uses: sonarsource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        with:
+          projectBaseDir: ${{ inputs.service-dir }}
+
+      - name: Quality Gate
+        uses: sonarsource/sonarqube-quality-gate-action@master
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        with:
+          scanMetadataReportFile: ${{ inputs.service-dir }}/.scannerwork/report-task.txt
