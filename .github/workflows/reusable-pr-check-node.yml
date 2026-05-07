@@ -248,10 +248,12 @@ jobs:
       - name: Run E2E tests
         working-directory: ${{ inputs.service-dir }}
         env:
+          # DEV_AUTH omite Firebase Auth real — obligatorio en CI (no hay emulador corriendo)
+          VITE_DEV_AUTH: "true"
+          VITE_FIREBASE_API_KEY: "demo-key"
           VITE_FIREBASE_PROJECT_ID: ${{ inputs.e2e-firebase-project-id }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ inputs.e2e-firebase-auth-domain }}
-          FIRESTORE_EMULATOR_HOST: ${{ vars.TEST_FIRESTORE_EMULATOR_HOST || 'localhost:8686' }}
-          FIREBASE_AUTH_EMULATOR_HOST: ${{ vars.TEST_FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099' }}
+          VITE_FIREBASE_AUTH_EMULATOR_URL: "http://localhost:9099"
         run: npx playwright test --reporter=junit,html
 
       - name: Publicar resultados E2E
