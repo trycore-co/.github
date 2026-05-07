@@ -222,7 +222,9 @@ jobs:
 
 **⚠️ El bloque `permissions:` en el job caller es obligatorio** — sin él GitHub falla con `startup_failure` antes de crear cualquier job (§16.6.1).
 
-**⚠️ Regla al escribir el reusable workflow:** no agregar `env:` con valores específicos de tu proyecto en ningún step del reusable. Todo lo que pongas ahí se inyecta en **todos** los repos de la org que usen ese workflow. Si tu proyecto necesita variables de entorno para los tests, defínelas como GitHub repository variables en el repo del proyecto — no en el reusable. Ver §16.6.2 de la guía.
+**⚠️ Regla al escribir el reusable workflow — env vars:** no agregar `env:` con valores específicos de tu proyecto en ningún step del reusable. Todo lo que pongas ahí se inyecta en **todos** los repos de la org que usen ese workflow. Si tu proyecto necesita variables de entorno para los tests, defínelas como GitHub repository variables en el repo del proyecto — no en el reusable. Ver §16.6.2 de la guía.
+
+**⚠️ Regla al escribir el reusable workflow — Quality Gate:** no poner `continue-on-error: true` en el step de Quality Gate dentro del reusable. Ese flag impide que el QG bloquee PRs en **todos** los repos de la org sin excepción — nadie puede contrarrestarlo desde su wrapper. Si un proyecto necesita desbloquear temporalmente el QG, debe ajustar los umbrales en el servidor SonarQube. Ver §16.6.3 de la guía y la tabla de responsabilidades §16.6.4.
 
 **Fase 3 — Documentar**
 

@@ -60,6 +60,8 @@ Antes de generar el workflow, responde estas preguntas y sustituye los valores e
 15. [Monorepo con múltiples microservicios](#15-monorepo-con-múltiples-microservicios)
 16. [Distribución org-level y reusable workflows](#16-distribución-org-level--repo-trycore-cogithub)
     - [16.6.2 Regla — nunca poner env vars de proyecto en un reusable](#1662-regla--nunca-poner-env-vars-de-proyecto-en-un-reusable-workflow)
+    - [16.6.3 Regla — Quality Gate continue-on-error nunca en el reusable](#1663-regla--quality-gate-continue-on-error-nunca-en-el-reusable)
+    - [16.6.4 Tabla — qué va en el reusable vs en el wrapper caller](#1664-tabla--qué-va-en-el-reusable-vs-en-el-wrapper-caller)
     - [16.7 Migración de repo existente al wrapper reusable](#167-migración-de-un-repo-existente-al-wrapper-reusable)
 17. [Monorepo front + backend](#17-monorepo-front--backend)
 
@@ -2907,6 +2909,74 @@ Si el proyecto necesita variables de entorno para correr sus tests localmente o 
 Si son secretos (tokens, passwords): usar **GitHub repository secrets** y pasarlos con `secrets: inherit`.
 
 **Señal de alerta:** si al modificar el reusable workflow sientes que necesitas agregar una `env:` con un valor específico de tu proyecto, es una señal de que la configuración va en el wrapper del repo, no en el reusable.
+
+---
+
+### 16.6.3 Regla — Quality Gate `continue-on-error` nunca en el reusable
+
+`continue-on-error: true` en el step de Quality Gate significa que el PR **nunca** puede ser bloqueado por calidad — el job siempre reporta verde, independientemente del resultado del análisis. Es una decisión de negocio que corresponde a cada equipo en su propio repo, no algo que deba estar fijo para toda la organización.
+
+**Está prohibido en el reusable:**
+
+```yaml
+# ❌ MAL — en reusable-pr-check-python.yml o reusable-pr-check-node.yml
+- name: Quality Gate
+  uses: sonarsource/sonarqube-quality-gate-action@v1.1.0
+  continue-on-error: true    # ← prohíbe que el QG bloquee PRs en TODOS los repos de la org
+```
+
+Cuando esto está en el reusable, todos los proyectos de la org pierden la capacidad de bloquear merges por calidad insuficiente, sin importar lo que configuren en su wrapper. No hay forma de contrarrestarlo desde el caller.
+
+**La solución: exponerlo como input y dejarlo en manos del wrapper**
+
+El reusable ya provee el input `tests-continue-on-error` para tests. Si un proyecto necesita desbloquear temporalmente el Quality Gate, tiene dos opciones:
+
+1. **Preferido:** ajustar el umbral directamente en el servidor SonarQube para ese proyecto (más transparente, auditable)
+2. **Alternativo temporal:** el reusable puede exponer un input `qg-continue-on-error: boolean` (default `false`) y el wrapper lo activa solo si el equipo lo decide explícitamente
+
+```yaml
+# ✅ BIEN — en el reusable: nunca hardcodeado, siempre false por defecto
+- name: Quality Gate
+  uses: sonarsource/sonarqube-quality-gate-action@v1.1.0
+  # sin continue-on-error — si se necesita, agregar input qg-continue-on-error
+```
+
+```yaml
+# ✅ BIEN — si el equipo decide temporalmente no bloquear, lo declara en su wrapper
+jobs:
+  check:
+    uses: trycore-co/.github/.github/workflows/reusable-pr-check-python.yml@main
+    with:
+      ...
+      # No hay forma de pasar continue-on-error al reusable por diseño
+      # Si el QG está fallando, ajustar los umbrales en SonarQube
+```
+
+**Por qué esto importa:** §8.4 describe `continue-on-error: true` como medida **TEMPORAL** en workflows de proyecto. Esa temporalidad desaparece si se fija en el reusable — se convierte en permanente para toda la org sin que nadie lo note.
+
+**Señal de alerta:** si al revisar o escribir un reusable workflow ves `continue-on-error: true` en el step de Quality Gate, es un error — retíralo siempre, sin excepción.
+
+---
+
+### 16.6.4 Tabla — qué va en el reusable vs en el wrapper caller
+
+Esta tabla resume las responsabilidades de cada capa para evitar que lógica de proyecto contamine el reusable, o que el reusable quede incompleto.
+
+| Elemento | Reusable workflow | Wrapper caller (repo del proyecto) |
+|---|---|---|
+| Lógica completa del análisis (pytest, sonar scan, trivy) | ✅ Aquí | ❌ No duplicar |
+| `permissions:` del job | ✅ Aquí (declarar siempre) | ✅ Aquí también (obligatorio — §16.6.1) |
+| `on: workflow_call:` con `inputs:` y `secrets:` | ✅ Aquí | ❌ No aplica |
+| `on: pull_request:` con `branches:` y `paths:` | ❌ No aplica | ✅ Aquí |
+| `service-dir`, `sonar-project-key`, `python-version` | Declarar como input | Pasar el valor concreto |
+| `has-tests`, `tests-continue-on-error` | Declarar como input (default `false`) | Pasar `true` si aplica |
+| `env:` con vars de entorno específicas del proyecto | ❌ Prohibido (§16.6.2) | ✅ Aquí, o como repo variables/secrets |
+| `continue-on-error` en Quality Gate | ❌ Prohibido (§16.6.3) | Solo si el equipo lo decide y lo documenta |
+| URLs, tokens, endpoints de infraestructura propia | ❌ Prohibido (§16.6.2) | Pasar vía `secrets: inherit` o repo vars |
+| Step de resumen (GitHub Step Summary) | ✅ Aquí — todos ven el mismo formato | ❌ No sobreescribir |
+| `workflow_dispatch:` para tests manuales | ❌ No aplica | ✅ Agregar siempre |
+
+**Regla general:** el reusable define el **cómo** (pasos, herramientas, formato de reporte). El wrapper define el **qué** (qué servicio, qué rama, qué parámetros de proyecto).
 
 ---
 
