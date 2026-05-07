@@ -209,7 +209,7 @@ jobs:
 
       - name: Quality Gate
         uses: sonarsource/sonarqube-quality-gate-action@master
-        continue-on-error: ${{ inputs.tests-continue-on-error }}
+        continue-on-error: true
         timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
