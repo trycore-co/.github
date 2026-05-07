@@ -2975,8 +2975,47 @@ Esta tabla resume las responsabilidades de cada capa para evitar que lógica de 
 | URLs, tokens, endpoints de infraestructura propia | ❌ Prohibido (§16.6.2) | Pasar vía `secrets: inherit` o repo vars |
 | Step de resumen (GitHub Step Summary) | ✅ Aquí — todos ven el mismo formato | ❌ No sobreescribir |
 | `workflow_dispatch:` para tests manuales | ❌ No aplica | ✅ Agregar siempre |
+| Jobs específicos del proyecto (E2E, smoke tests, migraciones) | ❌ No agregar al reusable | ✅ Definir como job adicional en el wrapper |
 
 **Regla general:** el reusable define el **cómo** (pasos, herramientas, formato de reporte). El wrapper define el **qué** (qué servicio, qué rama, qué parámetros de proyecto).
+
+**El wrapper puede tener más de un job.** Si un proyecto necesita un paso que no existe en el reusable (E2E con Playwright, smoke test contra staging, migración de DB), se agrega como job adicional en el propio wrapper — no en el reusable. Esto evita que lógica específica de un proyecto afecte a los demás:
+
+```yaml
+# .github/workflows/pr-check-mi-proyecto.yml
+jobs:
+  check:                                # ← llama al reusable estándar
+    uses: trycore-co/.github/.github/workflows/reusable-pr-check-node.yml@main
+    permissions:
+      checks: write
+      contents: read
+      security-events: write
+      actions: read
+    with:
+      service-dir: mi-servicio
+      sonar-project-key: mi-servicio
+      sonar-project-name: Mi Servicio
+    secrets: inherit
+
+  e2e-tests:                            # ← job propio del proyecto, con su propia lógica
+    name: E2E — Playwright
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+        working-directory: mi-servicio
+      - name: Run E2E tests
+        working-directory: mi-servicio
+        env:
+          VITE_DEV_AUTH: "true"
+          VITE_FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+        run: npx playwright test
+```
+
+Si ese patrón E2E eventualmente es común a varios proyectos Node, se puede crear un segundo reusable (`reusable-e2e-playwright-node.yml`) genérico y sin vars hardcodeadas — pero solo cuando haya dos o más proyectos que compartan exactamente la misma lógica.
 
 ---
 
