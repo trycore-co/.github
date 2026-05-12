@@ -72,9 +72,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Sanitizar project key para nombre de artefactos
+      - name: Sanitizar project key y variables de Sonar
         id: artifact
-        run: echo "key=$(echo '${{ inputs.sonar-project-key }}' | tr ':' '-')" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "key=$(echo '${{ inputs.sonar-project-key }}' | tr ':' '-')" >> "$GITHUB_OUTPUT"
+          echo "SONAR_HOST_URL=$(echo '${{ vars.SONAR_HOST_URL }}' | tr -d '[:space:]')" >> "$GITHUB_ENV"
 
       - name: Setup Python
         if: ${{ inputs.has-tests }}
@@ -157,7 +159,7 @@ jobs:
         uses: sonarsource/sonarqube-scan-action@master
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
         with:
           projectBaseDir: ${{ inputs.service-dir }}
 
@@ -166,7 +168,7 @@ jobs:
         working-directory: ${{ inputs.service-dir }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
         run: |
           REPORT=".scannerwork/report-task.txt"
           if [ ! -f "$REPORT" ]; then
@@ -240,7 +242,7 @@ jobs:
         timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
         with:
           scanMetadataReportFile: ${{ inputs.service-dir }}/.scannerwork/report-task.txt
 
