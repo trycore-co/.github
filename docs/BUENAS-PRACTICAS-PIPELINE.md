@@ -1302,12 +1302,30 @@ Si hay bugs conocidos que aún no fueron corregidos por el equipo de desarrollo:
 
 ### 8.5 Umbrales configurados en el Quality Gate
 
-| Métrica | Umbral |
-|---|---|
-| Cobertura (código nuevo) | ≥ 80% |
-| Duplicaciones | < 3% |
-| Bugs críticos | 0 |
-| Vulnerabilidades críticas | 0 |
+El Quality Gate **Trycore (Default)** tiene condiciones en dos capas (configuración validada como "recommended by Sonar" — mayo 2026):
+
+**Código Nuevo** — bloquea el PR si el código introducido en el PR viola alguna de estas condiciones:
+
+| Métrica | Operador | Valor |
+|---|---|---|
+| Issues (bugs + vulnerabilidades + smells) | mayor que | 0 |
+| Security Hotspots Reviewed | menor que | 100% |
+| Coverage | menor que | 80% |
+| Duplicated Lines (%) | mayor que | 3% |
+
+**Overall Code** — refleja el estado del proyecto completo (histórico). Un PR puede pasar el gate incluso si Overall Code falla — esto permite resolver deuda técnica gradualmente sin bloquear el trabajo nuevo:
+
+| Métrica | Operador | Valor |
+|---|---|---|
+| Bugs | mayor que | 0 |
+| Vulnerabilities | mayor que | 0 |
+| Code Smells | mayor que | 10 |
+| Coverage | menor que | 80% |
+| Duplicated Lines (%) | mayor que | 3% |
+| Security Hotspots Reviewed | menor que | 100% |
+| Security Rating | peor que | A |
+
+> **Por qué dos capas:** Overall Code evalúa la salud del proyecto acumulada; New Code garantiza que cada PR no empeore la calidad. Para proyectos con deuda técnica pre-existente, Overall Code puede fallar sin bloquear el merge — el equipo lo corrige iterativamente. New Code sí bloquea si el PR introduce nuevos problemas.
 
 ---
 
