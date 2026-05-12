@@ -62,6 +62,7 @@ Antes de generar el workflow, responde estas preguntas y sustituye los valores e
     - [16.6.2 Regla — nunca poner env vars de proyecto en un reusable](#1662-regla--nunca-poner-env-vars-de-proyecto-en-un-reusable-workflow)
     - [16.6.3 Regla — Quality Gate continue-on-error nunca en el reusable](#1663-regla--quality-gate-continue-on-error-nunca-en-el-reusable)
     - [16.6.4 Tabla — qué va en el reusable vs en el wrapper caller](#1664-tabla--qué-va-en-el-reusable-vs-en-el-wrapper-caller)
+    - [16.6.5 Lección aprendida — Quality Gate UNKNOWN por whitespace en SONAR_HOST_URL](#1665-lección-aprendida--quality-gate-unknown-por-whitespace-en-sonar_host_url)
     - [16.7 Migración de repo existente al wrapper reusable](#167-migración-de-un-repo-existente-al-wrapper-reusable)
 17. [Monorepo front + backend](#17-monorepo-front--backend)
 
@@ -1262,6 +1263,8 @@ env:
 
 > Si un proyecto necesita apuntar a un servidor Sonar diferente, puede sobreescribir
 > la variable a nivel de repo — tiene prioridad sobre la de organización.
+
+> ⚠️ **Whitespace invisible:** si el Quality Gate aparece como `UNKNOWN` tras configurar correctamente la variable, verificar que el valor no tiene saltos de línea ni espacios ocultos (frecuente cuando se crea la variable via script o copia/pega desde terminal). Ver §16.6.5 para el diagnóstico completo y el workaround defensivo aplicado en los reusable workflows.
 
 ### 8.2 Dos proyectos por microservicio
 
@@ -3016,6 +3019,56 @@ jobs:
 ```
 
 Si ese patrón E2E eventualmente es común a varios proyectos Node, se puede crear un segundo reusable (`reusable-e2e-playwright-node.yml`) genérico y sin vars hardcodeadas — pero solo cuando haya dos o más proyectos que compartan exactamente la misma lógica.
+
+### 16.6.5 Lección aprendida — Quality Gate UNKNOWN por whitespace en SONAR_HOST_URL
+
+**Proyecto:** Diagramador BPMN (mayo 2026). Detectado por Freyder Cárdenas.
+
+**Síntoma:** el Quality Gate aparece como `⚠️ UNKNOWN` en el Step Summary, aunque el SonarQube Scan completa sin errores. El step `sonarqube-quality-gate-action` también pasa (con `continue-on-error: true`), pero la métrica no refleja el estado real del proyecto.
+
+**Causa:** la variable de organización `SONAR_HOST_URL` tenía un carácter de whitespace invisible (salto de línea `\n` o espacio) al inicio o al final del valor. Al usarla directamente con `${{ vars.SONAR_HOST_URL }}` en el `env:` del step de Sonar, la URL resultante era inválida y las llamadas curl a la API de SonarQube fallaban silenciosamente.
+
+**Diagnóstico rápido:**
+```bash
+# En el log del step "Resumen SonarQube", buscar esta línea:
+curl -sf -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/qualitygates/project_status?..."
+
+# Si SONAR_HOST_URL tiene whitespace, la URL llega malformada y el curl
+# retorna vacío → el python3 -c parser devuelve "UNKNOWN"
+```
+
+**Fix aplicado en los reusable workflows (Node y Python):**
+
+En lugar de pasar `vars.SONAR_HOST_URL` directo al `env:` de cada step, se sanitiza **una sola vez** al inicio del job y se exporta a `$GITHUB_ENV`:
+
+```yaml
+- name: Sanitizar project key y variables de Sonar
+  id: artifact
+  run: |
+    echo "key=$(echo '${{ inputs.sonar-project-key }}' | tr ':' '-')" >> "$GITHUB_OUTPUT"
+    echo "SONAR_HOST_URL=$(echo '${{ vars.SONAR_HOST_URL }}' | tr -d '[:space:]')" >> "$GITHUB_ENV"
+```
+
+Todos los steps siguientes usan `${{ env.SONAR_HOST_URL }}` en lugar de `${{ vars.SONAR_HOST_URL }}`.
+
+**Fix en la variable de org (corrección en la fuente):**
+
+El workaround del `tr -d '[:space:]'` es defensivo y debe mantenerse, pero también conviene corregir la variable en la fuente para evitar confusión futura:
+
+1. Ir a `GitHub Org (trycore-co) → Settings → Secrets and variables → Actions → Variables`
+2. Editar `SONAR_HOST_URL`
+3. Borrar el contenido completo del campo y volver a escribir solo: `https://docs.trycore.co:9000`  (sin espacios, sin saltos de línea)
+4. Guardar
+
+> **Nota:** el textarea de GitHub no muestra saltos de línea invisibles — un `\n` al final del valor se ve igual que un valor limpio. Si la variable fue creada via script o copia/pega desde una terminal, es frecuente que arrastre un newline.
+
+**Impacto:** afecta cualquier reusable workflow que use `${{ vars.SONAR_HOST_URL }}` directamente en un `env:` sin sanitizar. Al migrar a `env.SONAR_HOST_URL` (seteado desde `$GITHUB_ENV`), el fix aplica automáticamente a todos los repos que usen el reusable — no requiere cambios en los wrappers de cada proyecto.
+
+**Repos afectados (confirmados):**
+- `trycore-co/diagramador-bpmn-draw-my-process` — primer repo en migrar a reusable Node
+- `trycore-co/docfly-paginas-backend` — usa reusable Python
+- `trycore-co/templaris-bpm-backend-ms` — 6 workflows usando reusable Python
+
 
 ---
 
