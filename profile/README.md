@@ -6,6 +6,7 @@ Consultoría de software especializada en arquitecturas modernas: microservicios
 
 - [Guía de Pipelines CI/CD](https://github.com/trycore-co/.github/blob/main/docs/BUENAS-PRACTICAS-PIPELINE.md) — GitHub Actions · SonarQube · Trivy
 - [Implementar Pipeline en un repo](https://github.com/trycore-co/.github/blob/main/docs/IMPLEMENTAR-PIPELINE.md) — prompts listos para IA · árbol de decisión · casos nuevo vs migración
+- [Jenkins CI/CD — Despliegue on-premise](https://github.com/trycore-co/.github/blob/main/docs/jenkins-cicd-policy.md) — Poll SCM · rollback automático · notificaciones · proyectos con Jenkins interno
 
 ## Stack habitual
 
