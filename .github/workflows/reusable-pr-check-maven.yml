@@ -117,6 +117,7 @@ jobs:
             -DskipITs \
             -Dsonar.projectKey=${{ inputs.sonar-project-key }} \
             -Dsonar.projectName="${{ inputs.sonar-project-name }}" \
+            -Dsonar.qualitygate.wait=false \
             --batch-mode
 
       - name: Encabezado Unit Tests en summary
@@ -249,6 +250,18 @@ jobs:
             echo ""
             echo "> Solo aplica a dependencias con fix disponible. Modo informativo — no bloquea el pipeline."
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ -s trivy-table.txt ] && { [ "$CRITICAL" != "0" ] || [ "$HIGH" != "0" ] || [ "$MEDIUM" != "0" ]; }; then
+            {
+              echo ""
+              echo "<details>"
+              echo "<summary>📋 Ver detalle de vulnerabilidades CVE encontradas</summary>"
+              echo ""
+              echo '```'
+              head -200 trivy-table.txt
+              echo '```'
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - uses: actions/upload-artifact@v4
         if: always()
