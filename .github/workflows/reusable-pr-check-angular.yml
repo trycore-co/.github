@@ -253,6 +253,18 @@ jobs:
             echo ""
             echo "> Solo aplica a dependencias con fix disponible. Modo informativo — no bloquea el pipeline."
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ -s trivy-table.txt ] && { [ "$CRITICAL" != "0" ] || [ "$HIGH" != "0" ] || [ "$MEDIUM" != "0" ]; }; then
+            {
+              echo ""
+              echo "<details>"
+              echo "<summary>📋 Ver detalle de vulnerabilidades CVE encontradas</summary>"
+              echo ""
+              echo '```'
+              head -200 trivy-table.txt
+              echo '```'
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -348,6 +360,28 @@ jobs:
             echo "> **Critical** bloquea el merge. **High/Moderate** es informativo."
             echo "> Correr \`npm audit fix\` localmente para dependencias con fix disponible."
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CRITICAL" != "0" ] || [ "$HIGH" != "0" ]; then
+            JQ_ROWS=$(jq -r '
+              .vulnerabilities // {} | to_entries |
+              map(select(.value.severity == "critical" or .value.severity == "high")) |
+              sort_by([(.value.severity == "critical" | not), .key]) |
+              .[] |
+              "| " + .key + " | " + .value.severity + " | " + (.value.range // "?") + " | " + (if .value.fixAvailable == true then "Si" elif (.value.fixAvailable | type) == "object" then "Parcial" else "No" end) + " |"
+            ' npm-audit.json 2>/dev/null || echo "")
+            if [ -n "$JQ_ROWS" ]; then
+              {
+                echo ""
+                echo "<details>"
+                echo "<summary>Ver paquetes con vulnerabilidades CRITICAL/HIGH</summary>"
+                echo ""
+                echo "| Paquete | Severidad | Versiones afectadas | Fix disponible |"
+                echo "|---------|-----------|---------------------|----------------|"
+                echo "$JQ_ROWS"
+                echo ""
+                echo "</details>"
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
 
       - name: Sanitize artifact name
         if: always()
