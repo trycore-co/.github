@@ -41,7 +41,8 @@ Estas configuraciones ya existen en la organización `trycore-co`. Solo confirma
 
 - [x] `SONAR_TOKEN` — secret de organización (no configurar por repo)
 - [x] `SONAR_HOST_URL` — variable de organización (no configurar por repo)
-- [x] Reusable workflow Python en `trycore-co/.github`
+- [x] Reusable workflow Python en `trycore-co/.github` (`reusable-pr-check-python.yml`)
+- [x] Reusable workflow Node/React en `trycore-co/.github` (`reusable-pr-check-node.yml`)
 
 Si el repo es de una org diferente a `trycore-co`, ver §16.1 de la [Guía de Buenas Prácticas](BUENAS-PRACTICAS-PIPELINE.md) para configurar los secrets antes de continuar.
 
@@ -64,9 +65,10 @@ https://github.com/trycore-co/.github/blob/main/docs/BUENAS-PRACTICAS-PIPELINE.m
 - `SONAR_TOKEN` ya es secret de organización
 - `SONAR_HOST_URL` ya es variable de organización
 - El reusable workflow Python ya existe en `trycore-co/.github/.github/workflows/reusable-pr-check-python.yml@main`
+- El reusable workflow Node/React ya existe en `trycore-co/.github/.github/workflows/reusable-pr-check-node.yml@main`
 
 **Lo que debes hacer:**
-1. Explorar el repo e identificar: qué servicios/directorios existen, si cada uno tiene `tests/unit/`, y qué versión de Python usan
+1. Explorar el repo e identificar: qué servicios/directorios existen, si cada uno tiene `tests/unit/` (Python) o `src/**` (Node), y qué versión de lenguaje usan
 2. Por cada servicio, crear `.github/workflows/pr-check-<nombre-servicio>.yml` usando el wrapper de §16.4 de la guía
 3. Cada archivo debe tener ~25 líneas con esta estructura:
 
@@ -107,6 +109,21 @@ jobs:
 
 **⚠️ El bloque `permissions:` en el job es obligatorio.** Sin él, GitHub rechaza el workflow con `startup_failure` sin mostrar ningún log de error.
 
+**⚠️ Python con `pyproject.toml` — crear `requirements-dev.txt`.**
+El reusable ejecuta `pip install -r <requirements-file>`. Si el proyecto usa `pyproject.toml` (sin `requirements.txt` propio), crear el archivo `backend/requirements-dev.txt` con una sola línea:
+```
+-e .[dev]
+```
+Y en el wrapper pasar `requirements-file: requirements-dev.txt`. Sin este archivo el pipeline falla con `FileNotFoundError`.
+
+**⚠️ Python — los tests deben estar en `tests/unit/`.**
+El reusable ejecuta `pytest tests/unit/` de forma fija. Si los tests están en `tests/` directamente, moverlos a `tests/unit/` y actualizar `testpaths` en `pyproject.toml`:
+```toml
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+```
+Sin esta estructura el reusable reporta 0 tests sin error visible.
+
 ---
 
 ## Caso 2 — Repo con pipeline inline existente (migración)
@@ -128,6 +145,7 @@ Lee específicamente **§16.7** (Migración de repo existente) y **§16.6.1** (s
 - `SONAR_TOKEN` ya es secret de organización
 - `SONAR_HOST_URL` ya es variable de organización
 - El reusable workflow Python ya existe en `trycore-co/.github/.github/workflows/reusable-pr-check-python.yml@main`
+- El reusable workflow Node/React ya existe en `trycore-co/.github/.github/workflows/reusable-pr-check-node.yml@main`
 
 **Lo que debes hacer:**
 
@@ -154,9 +172,13 @@ Lee específicamente **§16.7** (Migración de repo existente) y **§16.6.1** (s
 
 ---
 
-## Caso 3 — Stack no-Python (Java, React, Angular, Node.js)
+## Caso 3 — Stack no-Python/no-Node (Java, Angular u otro)
 
-**Para el líder:** pide esto cuando el repo usa un stack diferente a Python/FastAPI y no existe todavía un reusable workflow para ese stack en `trycore-co/.github`.
+**Para el líder:** pide esto cuando el repo usa un stack para el que **no existe todavía** un reusable workflow en `trycore-co/.github`.
+
+> **React / Vite / Vitest / Node.js** → ya existe `reusable-pr-check-node.yml`. Usar **Caso 1** apuntando a ese reusable — no hace falta crear nada nuevo en el repo de la org.
+>
+> Este caso aplica para: **Java/Maven, Angular**, o cualquier otro stack que no tenga reusable todavía.
 
 **Diferencia con los casos anteriores:** aquí hay que crear el reusable workflow primero en el repo de la org, y luego sí crear el wrapper en el repo del proyecto. Son dos repos distintos.
 
@@ -246,23 +268,115 @@ jobs:
 ## ¿Cuál caso aplica a mi proyecto?
 
 ```
-¿El stack del repo es Python/FastAPI?
+¿Qué stack tiene el repo?
 │
-├── Sí → ¿Tiene archivos en .github/workflows/?
-│         │
-│         ├── No  → Caso 1 (repo nuevo Python)
-│         │
-│         └── Sí  → ¿Más de 50 líneas?
-│                   ├── Sí → Caso 2 (migración Python)
-│                   └── No → Ya usa el wrapper, no hacer nada
+├── Python / FastAPI / pytest
+│     │
+│     └── ¿Tiene archivos en .github/workflows/?
+│           ├── No  → Caso 1  (repo nuevo Python)
+│           └── Sí  → ¿Más de 50 líneas?
+│                     ├── Sí → Caso 2  (migración Python)
+│                     └── No → Ya usa el wrapper — no hacer nada
 │
-└── No (Java, React, Angular, Node.js...)
-          │
-          └── ¿Existe reusable-pr-check-<stack>.yml en trycore-co/.github?
-              │
-              ├── Sí → Caso 1 o 2 adaptando el uses: al stack correcto
-              │
-              └── No → Caso 3 (crear reusable nuevo + wrapper)
+├── React / Vite / Vitest / Node.js
+│     │
+│     └── ¿Tiene archivos en .github/workflows/?
+│           ├── No  → Caso 1  (repo nuevo Node — uses: reusable-pr-check-node.yml)
+│           └── Sí  → ¿Más de 50 líneas?
+│                     ├── Sí → Caso 2  (migración Node)
+│                     └── No → Ya usa el wrapper — no hacer nada
+│
+└── Java / Angular / otro
+      │
+      └── ¿Existe reusable-pr-check-<stack>.yml en trycore-co/.github?
+            ├── Sí → Caso 1 o 2 adaptando el uses: al stack correcto
+            └── No → Caso 3  (crear reusable nuevo + wrapper)
+```
+
+---
+
+## Caso 4 — Crear el job de despliegue en Jenkins
+
+**Para el líder:** una vez que el repo tiene `Jenkinsfile` en la raíz, hacer esto una sola vez en Jenkins para activar el despliegue automático a `develop`.
+
+**Prerequisito:** el `Jenkinsfile` ya debe existir en el repo (si no existe, pedirle a una IA que lo genere siguiendo la [política Jenkins](jenkins-cicd-policy.md)).
+
+### Paso a paso en la UI de Jenkins
+
+1. Entrar a Jenkins (`http://<servidor>:8013` o la URL de la org)
+2. Navegar al **folder del proyecto** (ej: `Trycore → AI-hub`)
+3. Click en **"New Item"** (esquina superior izquierda)
+4. Escribir el nombre del job (ej: `deploy-ia-hub`) y seleccionar **"Pipeline"** → OK
+5. En la configuración del job:
+   - **Description:** breve descripción del proyecto
+   - **Build Triggers:** marcar **"Poll SCM"** y en el campo de cron escribir `H/2 * * * *`
+   - **Pipeline → Definition:** seleccionar **"Pipeline script from SCM"**
+   - **SCM:** Git
+   - **Repository URL:** URL HTTPS del repo de GitHub (ej: `https://github.com/trycore-co/<repo>.git`)
+   - **Credentials:** seleccionar la credencial de GitHub (ver §3.2 de la [política Jenkins](jenkins-cicd-policy.md) para el ID)
+   - **Branches to build:** `*/develop` (añadir `*/release/*` y `*/main` si aplica)
+   - **Script Path:** `Jenkinsfile`
+6. Click en **Save**
+7. Ir al job recién creado → **"Build with Parameters"** → ejecutar el primer build manualmente para verificar
+
+> ⚠️ **No agregar `triggers { pollSCM }` en el Jenkinsfile** si ya configuraste Poll SCM en la UI — causa builds duplicados. El Jenkinsfile solo debe declarar la lógica de stages, no el trigger.
+
+### Credencial de Google Chat (webhook)
+
+El `Jenkinsfile` de cada proyecto usa una credencial tipo **Secret Text** para enviar notificaciones. Crearla antes del primer build:
+
+**Para la IA 🤖 — si necesitas crear la credencial desde curl:**
+
+La creación de credenciales en Jenkins por API tiene una trampa: el **CSRF token (crumb) es de sesión** — si lo obtienes en un request y lo usas en otro sin compartir las cookies, Jenkins devuelve 403 o 500 sin mensaje útil.
+
+La forma más confiable desde curl:
+
+```bash
+# 1. Obtener crumb guardando las cookies en archivo
+curl -s -u "admin:PASSWORD" \
+  -c /tmp/jenkins-cookies.txt \
+  "http://<jenkins>/crumbIssuer/api/json"
+# Tomar el valor de "crumb" de la respuesta
+
+# 2. Crear la credencial usando LAS MISMAS cookies
+curl -s -u "admin:PASSWORD" \
+  -b /tmp/jenkins-cookies.txt \
+  -c /tmp/jenkins-cookies.txt \
+  -H "Jenkins-Crumb: <CRUMB-DEL-PASO-1>" \
+  -X POST "http://<jenkins>/credentials/store/system/domain/_/createCredentials" \
+  --data-urlencode 'json={
+    "": "0",
+    "credentials": {
+      "scope": "GLOBAL",
+      "id": "gchat-webhook-<proyecto>",
+      "secret": "https://chat.googleapis.com/...",
+      "description": "Google Chat webhook <proyecto>",
+      "$class": "org.jenkinsci.plugins.plaincredentials.impl.StringCredentialsImpl"
+    }
+  }'
+```
+
+**Alternativa sin curl — Script Console de Groovy** (más confiable, no tiene problemas de CSRF):
+
+1. Jenkins → **Manage Jenkins → Script Console**
+2. Ejecutar:
+
+```groovy
+import com.cloudbees.plugins.credentials.*
+import com.cloudbees.plugins.credentials.domains.*
+import org.jenkinsci.plugins.plaincredentials.impl.StringCredentialsImpl
+import hudson.util.Secret
+
+def cred = new StringCredentialsImpl(
+    CredentialsScope.GLOBAL,
+    'gchat-webhook-<proyecto>',
+    'Google Chat webhook <proyecto>',
+    Secret.fromString('https://chat.googleapis.com/...')
+)
+SystemCredentialsProvider.getInstance()
+    .getStore()
+    .addCredentials(Domain.global(), cred)
+println "Credencial creada OK"
 ```
 
 ---
