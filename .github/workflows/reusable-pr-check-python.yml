@@ -246,32 +246,41 @@ jobs:
         with:
           scanMetadataReportFile: ${{ inputs.service-dir }}/.scannerwork/report-task.txt
 
-      - name: Trivy — escanear y guardar tabla
+      - name: Trivy — instalar e inventariar vulnerabilidades (JSON único)
         if: always()
         working-directory: ${{ inputs.service-dir }}
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-
+          # Un solo scan JSON — extrae conteos de los 3 niveles sin correr trivy 4 veces
           trivy fs . \
             --severity CRITICAL,HIGH,MEDIUM \
             --ignore-unfixed \
             --skip-dirs '.git,__pycache__,venv,.venv' \
-            --format table \
-            --output trivy-table.txt 2>/dev/null || true
-
-          CRITICAL=$(trivy fs . --severity CRITICAL --ignore-unfixed --skip-dirs '.git,__pycache__,venv,.venv' --format json 2>/dev/null \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(len(r.get('Vulnerabilities') or []) for r in d.get('Results',[])))" 2>/dev/null || echo "0")
-          HIGH=$(trivy fs . --severity HIGH --ignore-unfixed --skip-dirs '.git,__pycache__,venv,.venv' --format json 2>/dev/null \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(len(r.get('Vulnerabilities') or []) for r in d.get('Results',[])))" 2>/dev/null || echo "0")
-          MEDIUM=$(trivy fs . --severity MEDIUM --ignore-unfixed --skip-dirs '.git,__pycache__,venv,.venv' --format json 2>/dev/null \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(len(r.get('Vulnerabilities') or []) for r in d.get('Results',[])))" 2>/dev/null || echo "0")
-
+            --format json \
+            --output trivy-report.json 2>/dev/null || true
+          CRITICAL=$(python3 -c "
+          import json
+          d = json.load(open('trivy-report.json'))
+          vulns = [v for r in d.get('Results',[]) for v in (r.get('Vulnerabilities') or [])]
+          print(sum(1 for v in vulns if v.get('Severity')=='CRITICAL'))
+          " 2>/dev/null || echo "0")
+          HIGH=$(python3 -c "
+          import json
+          d = json.load(open('trivy-report.json'))
+          vulns = [v for r in d.get('Results',[]) for v in (r.get('Vulnerabilities') or [])]
+          print(sum(1 for v in vulns if v.get('Severity')=='HIGH'))
+          " 2>/dev/null || echo "0")
+          MEDIUM=$(python3 -c "
+          import json
+          d = json.load(open('trivy-report.json'))
+          vulns = [v for r in d.get('Results',[]) for v in (r.get('Vulnerabilities') or [])]
+          print(sum(1 for v in vulns if v.get('Severity')=='MEDIUM'))
+          " 2>/dev/null || echo "0")
           if [ "$CRITICAL" = "0" ] && [ "$HIGH" = "0" ]; then
             SCA_STATUS="✅ Sin vulnerabilidades CRITICAL/HIGH"
           else
             SCA_STATUS="⚠️ Vulnerabilidades encontradas (modo informativo)"
           fi
-
           {
             echo "## 🛡️ SCA — Trivy — $SCA_STATUS"
             echo ""
@@ -283,10 +292,51 @@ jobs:
             echo ""
             echo "> Solo aplica a dependencias con fix disponible. Modo informativo — no bloquea el pipeline."
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CRITICAL" != "0" ] || [ "$HIGH" != "0" ] || [ "$MEDIUM" != "0" ]; then
+            DETAIL=$(python3 -c "
+          import json
+          d = json.load(open('trivy-report.json'))
+          rows = []
+          for r in d.get('Results', []):
+            for v in (r.get('Vulnerabilities') or []):
+              sev = v.get('Severity','')
+              if sev in ('CRITICAL','HIGH','MEDIUM'):
+                fix = v.get('FixedVersion','') or 'Sin fix'
+                rows.append(f\"| {v.get('PkgName','?')} | {sev} | {v.get('VulnerabilityID','?')} | {v.get('InstalledVersion','?')} | {fix} |\")
+          print('\n'.join(rows[:60]))
+          " 2>/dev/null || echo "")
+            if [ -n "$DETAIL" ]; then
+              {
+                echo ""
+                echo "<details>"
+                echo "<summary>📋 Ver detalle de CVEs encontrados (CRITICAL / HIGH / MEDIUM)</summary>"
+                echo ""
+                echo "| Paquete | Severidad | CVE | Versión instalada | Fix disponible |"
+                echo "|---------|-----------|-----|-------------------|----------------|"
+                echo "$DETAIL"
+                echo ""
+                echo "</details>"
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          # Generar SARIF usando el binario ya instalado
+          trivy fs . \
+            --severity CRITICAL,HIGH,MEDIUM \
+            --ignore-unfixed \
+            --skip-dirs '.git,__pycache__,venv,.venv' \
+            --format sarif \
+            --output trivy-results.sarif 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: trivy-sca-report-${{ steps.artifact.outputs.key }}-${{ github.run_id }}
-          path: ${{ inputs.service-dir }}/trivy-table.txt
+          path: ${{ inputs.service-dir }}/trivy-report.json
           retention-days: 30
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        continue-on-error: true
+        with:
+          sarif_file: trivy-results.sarif
