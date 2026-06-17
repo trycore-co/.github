@@ -26,8 +26,8 @@ Los workflows viven en este repo (`.github/workflows/`) y cualquier repo de la o
 |---|---|---|
 | `reusable-pr-check-python.yml` | Python · FastAPI · pytest | ✅ Listo |
 | `reusable-pr-check-node.yml` | React · Vite · Vitest · Node.js | ✅ Listo |
-| Java · Spring Boot · Maven | — | Pendiente |
-| Angular | — | Pendiente |
+| `reusable-pr-check-maven.yml` | Java · Spring Boot · Maven · JHipster | ✅ Listo |
+| `reusable-pr-check-angular.yml` | Angular · Karma · Jasmine | ✅ Listo |
 
 > **Prerequisitos ya configurados en la org:** `SONAR_TOKEN` (secret de org) y `SONAR_HOST_URL` (variable de org). No configurar por repo.
 
@@ -84,6 +84,58 @@ jobs:
     with:
       service-dir: frontend
       sonar-project-key: Proyecto:NombreServicio-Frontend
+      sonar-project-name: Nombre Legible Frontend
+      node-version: '20'
+      has-tests: true
+    secrets: inherit
+```
+
+```yaml
+# Ejemplo: microservicio Java/Spring Boot (JHipster)
+name: PR Check — Microservicio Java
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [develop, main, 'release/**']
+
+jobs:
+  check:
+    uses: trycore-co/.github/.github/workflows/reusable-pr-check-maven.yml@main
+    permissions:
+      checks: write
+      contents: read
+      security-events: write
+      actions: read
+    with:
+      service-dir: .
+      sonar-project-key: Proyecto:NombreServicio
+      sonar-project-name: Nombre Legible
+      java-version: '17'
+      has-tests: true
+    secrets: inherit
+```
+
+```yaml
+# Ejemplo: frontend Angular
+name: PR Check — Frontend Angular
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [develop, main, 'release/**']
+
+jobs:
+  check:
+    uses: trycore-co/.github/.github/workflows/reusable-pr-check-angular.yml@main
+    permissions:
+      checks: write
+      contents: read
+      security-events: write
+      actions: read
+    with:
+      service-dir: .
+      sonar-project-key: Proyecto:NombreServicio-Front
       sonar-project-name: Nombre Legible Frontend
       node-version: '20'
       has-tests: true

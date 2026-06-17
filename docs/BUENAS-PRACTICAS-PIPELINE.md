@@ -6,7 +6,13 @@
 
 ## Guía para IA — Cómo generar un workflow desde este documento
 
-> **Contexto org trycore-co:** `SONAR_TOKEN` y `SONAR_HOST_URL` ya están configurados como secret y variable de organización respectivamente — **no se configuran por repo**. Para nuevos proyectos Python en la org, usar el wrapper de §16.4 (20 líneas) en lugar de copiar el template completo de §5. Para otros stacks (Java, React, Angular) seguir usando los templates de §4/§6/§7 por ahora — los reusable workflows para esos stacks están pendientes.
+> **Contexto org trycore-co:** `SONAR_TOKEN` y `SONAR_HOST_URL` ya están configurados como secret y variable de organización respectivamente — **no se configuran por repo**. Para cualquier proyecto en la org, usar el wrapper de §16.4 (25 líneas) en lugar de copiar el template completo de §4/§5/§6/§7. Los reusable workflows para **todos los stacks** ya existen en `trycore-co/.github`:
+> - Python → `reusable-pr-check-python.yml`
+> - Java / Maven / JHipster → `reusable-pr-check-maven.yml`
+> - Angular 19 → `reusable-pr-check-angular.yml`
+> - React / Vite / Node.js → `reusable-pr-check-node.yml`
+>
+> Los templates de §4/§6/§7 son referencia para entender qué hace cada step — **no** se deben copiar directamente a repos de la org.
 >
 > **¿Vas a implementar el pipeline en un repo nuevo o a migrar uno existente?** Usa la [Guía de Implementación](IMPLEMENTAR-PIPELINE.md) — tiene los prompts listos para darle a una IA y el árbol de decisión para saber qué caso aplica.
 
@@ -284,7 +290,9 @@ Después del análisis, consultar la API de SonarQube para obtener las métricas
 
 ### 3.3 Bloque: Trivy SCA con conteo por severidad
 
-El job `sca-trivy` instala trivy manualmente (más confiable que la action) y cuenta por severidad usando JSON. El job completo (listo para copiar):
+El job `sca-trivy` instala trivy manualmente y lo ejecuta **dos veces**: una para JSON (extrae los 3 conteos de severidad en un solo paso) y otra para SARIF. Esto reemplaza el patrón anterior de 4-5 ejecuciones separadas que causaba rate-limit 429 en repos Maven — ver §16.6.6.
+
+> **Nota para repos org trycore-co:** los reusable workflows ya incluyen este patrón. No copiar este bloque directamente — usar el wrapper de §16.4.
 
 ```yaml
   sca-trivy:
@@ -299,48 +307,101 @@ El job `sca-trivy` instala trivy manualmente (más confiable que la action) y cu
     steps:
       - uses: actions/checkout@v4
 
-      - name: Trivy — escanear y guardar tabla
+      - name: Sanitize artifact name
+        id: artifact
+        run: echo "key=$(echo '${{ inputs.sonar-project-key }}' | tr ':' '-')" >> "$GITHUB_OUTPUT"
+
+      - name: Trivy — instalar e inventariar vulnerabilidades (JSON único)
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-
+          # Un solo scan JSON — extrae conteos de los 3 niveles sin correr trivy 4 veces
           trivy fs . \
             --severity CRITICAL,HIGH,MEDIUM \
             --ignore-unfixed \
             --skip-dirs 'DIRS_TRIVY' \
-            --format table \
-            --output trivy-table.txt 2>/dev/null || true
-
-          CRITICAL=$(trivy fs . --severity CRITICAL --ignore-unfixed --skip-dirs 'DIRS_TRIVY' --format json 2>/dev/null \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(len(r.get('Vulnerabilities') or []) for r in d.get('Results',[])))" 2>/dev/null || echo "0")
-          HIGH=$(trivy fs . --severity HIGH --ignore-unfixed --skip-dirs 'DIRS_TRIVY' --format json 2>/dev/null \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(len(r.get('Vulnerabilities') or []) for r in d.get('Results',[])))" 2>/dev/null || echo "0")
-          MEDIUM=$(trivy fs . --severity MEDIUM --ignore-unfixed --skip-dirs 'DIRS_TRIVY' --format json 2>/dev/null \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(len(r.get('Vulnerabilities') or []) for r in d.get('Results',[])))" 2>/dev/null || echo "0")
-
+            --format json \
+            --output trivy-report.json 2>/dev/null || true
+          CRITICAL=$(python3 -c "
+          import json
+          d = json.load(open('trivy-report.json'))
+          vulns = [v for r in d.get('Results',[]) for v in (r.get('Vulnerabilities') or [])]
+          print(sum(1 for v in vulns if v.get('Severity')=='CRITICAL'))
+          " 2>/dev/null || echo "0")
+          HIGH=$(python3 -c "
+          import json
+          d = json.load(open('trivy-report.json'))
+          vulns = [v for r in d.get('Results',[]) for v in (r.get('Vulnerabilities') or [])]
+          print(sum(1 for v in vulns if v.get('Severity')=='HIGH'))
+          " 2>/dev/null || echo "0")
+          MEDIUM=$(python3 -c "
+          import json
+          d = json.load(open('trivy-report.json'))
+          vulns = [v for r in d.get('Results',[]) for v in (r.get('Vulnerabilities') or [])]
+          print(sum(1 for v in vulns if v.get('Severity')=='MEDIUM'))
+          " 2>/dev/null || echo "0")
           if [ "$CRITICAL" = "0" ] && [ "$HIGH" = "0" ]; then
             SCA_STATUS="✅ Sin vulnerabilidades CRITICAL/HIGH"
           else
             SCA_STATUS="⚠️ Vulnerabilidades encontradas (modo informativo)"
           fi
-
-          cat >> "$GITHUB_STEP_SUMMARY" << SUMMARY
-          ## 🛡️ SCA — Trivy — $SCA_STATUS
-
-          | Severidad | Vulnerabilidades encontradas |
-          |-----------|----------------------------|
-          | 🔴 Critical | $CRITICAL |
-          | 🟠 High | $HIGH |
-          | 🟡 Medium | $MEDIUM |
-
-          > Solo aplica a dependencias con fix disponible. Modo informativo — no bloquea el pipeline.
-          SUMMARY
+          {
+            echo "## 🛡️ SCA — Trivy — $SCA_STATUS"
+            echo ""
+            echo "| Severidad | Vulnerabilidades encontradas |"
+            echo "|-----------|----------------------------|"
+            echo "| 🔴 Critical | $CRITICAL |"
+            echo "| 🟠 High | $HIGH |"
+            echo "| 🟡 Medium | $MEDIUM |"
+            echo ""
+            echo "> Solo aplica a dependencias con fix disponible. Modo informativo — no bloquea el pipeline."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CRITICAL" != "0" ] || [ "$HIGH" != "0" ] || [ "$MEDIUM" != "0" ]; then
+            DETAIL=$(python3 -c "
+          import json
+          d = json.load(open('trivy-report.json'))
+          rows = []
+          for r in d.get('Results', []):
+            for v in (r.get('Vulnerabilities') or []):
+              sev = v.get('Severity','')
+              if sev in ('CRITICAL','HIGH','MEDIUM'):
+                fix = v.get('FixedVersion','') or 'Sin fix'
+                rows.append(f\"| {v.get('PkgName','?')} | {sev} | {v.get('VulnerabilityID','?')} | {v.get('InstalledVersion','?')} | {fix} |\")
+          print('\n'.join(rows[:60]))
+          " 2>/dev/null || echo "")
+            if [ -n "$DETAIL" ]; then
+              {
+                echo ""
+                echo "<details>"
+                echo "<summary>📋 Ver detalle de CVEs encontrados</summary>"
+                echo ""
+                echo "| Paquete | Severidad | CVE | Versión instalada | Fix disponible |"
+                echo "|---------|-----------|-----|-------------------|----------------|"
+                echo "$DETAIL"
+                echo "</details>"
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          # SARIF: usar binario ya instalado — no usar trivy-action (causa 429, ver §16.6.6)
+          trivy fs . \
+            --severity CRITICAL,HIGH,MEDIUM \
+            --ignore-unfixed \
+            --skip-dirs 'DIRS_TRIVY' \
+            --format sarif \
+            --output trivy-results.sarif 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: trivy-sca-report-${{ github.run_id }}
-          path: trivy-table.txt
+          name: trivy-sca-report-${{ steps.artifact.outputs.key }}-${{ github.run_id }}
+          path: trivy-report.json
           retention-days: 30
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        continue-on-error: true
+        with:
+          sarif_file: trivy-results.sarif
 ```
 
 ### 3.4 Tests con errores conocidos — continue-on-error
@@ -1355,16 +1416,18 @@ trivy fs . --severity CRITICAL,HIGH --ignore-unfixed ...
 
 ### 9.3 En repos privados sin GitHub Advanced Security
 
-El SARIF no se puede subir a la pestaña Security de GitHub en repos privados sin licencia Advanced Security. Usar tabla en artefacto en lugar de SARIF:
+El SARIF no se puede subir a la pestaña Security de GitHub en repos privados sin licencia Advanced Security. En ese caso el step `Upload SARIF` fallará con `continue-on-error: true` — el artefacto JSON sirve como respaldo:
 
 ```yaml
 - uses: actions/upload-artifact@v4
   if: always()
   with:
     name: trivy-sca-report-${{ github.run_id }}
-    path: trivy-table.txt
+    path: trivy-report.json   # JSON estructurado — reemplaza el trivy-table.txt anterior
     retention-days: 30
 ```
+
+> **Nota:** el artefacto cambió de `trivy-table.txt` (texto plano ASCII) a `trivy-report.json` (JSON nativo de Trivy). El JSON permite filtrar CVEs por severidad, comparar entre runs y generar reportes automáticos — ver §16.6.6 para el contexto del cambio.
 
 ---
 
@@ -2824,9 +2887,10 @@ git push origin main
 
 ### 16.6 Cuándo NO usar el reusable workflow
 
-- El servicio usa un stack diferente (Java, Node.js) — crear un reusable workflow específico para ese stack
-- El servicio tiene un proceso de instalación muy distinto (ej. LibreOffice para pdf-generator) — puede valer la pena un input extra o un workflow propio
+- El servicio tiene un proceso de instalación muy distinto al estándar (ej. LibreOffice para pdf-generator, Go, Rust) — puede valer la pena crear un reusable específico para ese stack o usar un workflow propio
 - Se necesita mayor control sobre cada step para depurar un problema — temporalmente volver al workflow expandido hasta resolver
+
+> **Ya NO aplica:** "el stack es Java/Node.js/Angular" — los reusable workflows para Maven, Angular, React/Vite y Python ya existen en `trycore-co/.github`. Para esos stacks siempre usar el wrapper de §16.4.
 
 ---
 
@@ -3087,6 +3151,35 @@ El workaround del `tr -d '[:space:]'` es defensivo y debe mantenerse, pero tambi
 - `trycore-co/docfly-paginas-backend` — usa reusable Python
 - `trycore-co/templaris-bpm-backend-ms` — 6 workflows usando reusable Python
 
+---
+
+### 16.6.6 Lección aprendida — `trivy-action@master` causa rate-limit 429 en repos Maven
+
+**Síntoma:** el step "Trivy — generar SARIF" falla con `Error 429 Too Many Requests` en repos Java/Maven. El job continúa (`continue-on-error: true`) pero el SARIF no se sube a la pestaña Security. En los logs se ve una request hacia `repo.maven.apache.org` que recibe 429.
+
+**Causa:** `aquasecurity/trivy-action@master` descarga Trivy y sus bases de datos de forma independiente al binario ya instalado manualmente en el mismo job. Esta descarga adicional (que incluye resolución de dependencias contra Maven Central) se hace sin control de rate-limit y falla cuando los runners de GitHub tienen muchas peticiones simultáneas hacia `repo.maven.apache.org`.
+
+**Además:** el patrón anterior corría `trivy fs` 4 veces por job (tabla + JSON por cada severidad + trivy-action SARIF), lo que multiplicaba el tiempo del job y las descargas de bases de datos.
+
+**Fix aplicado en todos los reusable workflows (2026-06-17):**
+
+```bash
+# ❌ ANTES — 4-5 ejecuciones de trivy + trivy-action separada:
+trivy fs . --format table --output trivy-table.txt
+CRITICAL=$(trivy fs . --severity CRITICAL --format json | python3 ...)
+HIGH=$(trivy fs . --severity HIGH --format json | python3 ...)
+MEDIUM=$(trivy fs . --severity MEDIUM --format json | python3 ...)
+# + aquasecurity/trivy-action@master (descarga trivy de nuevo → 429)
+
+# ✅ AHORA — 2 ejecuciones con el binario ya instalado:
+trivy fs . --format json --output trivy-report.json   # extraer C/H/M con python en un paso
+trivy fs . --format sarif --output trivy-results.sarif # SARIF sin descarga extra
+```
+
+**Regla:** nunca usar `aquasecurity/trivy-action@master` cuando ya se instaló el binario manualmente. El SARIF se genera con `--format sarif` directamente. El artefacto cambia de `trivy-table.txt` a `trivy-report.json` (más útil para procesamiento posterior).
+
+**Repos confirmados con el error 429:**
+- `trycore-co/OP2893113---SOFTWARE-COBRA` (Gateway) — primer caso identificado en las ejecuciones de COBRA
 
 ---
 
