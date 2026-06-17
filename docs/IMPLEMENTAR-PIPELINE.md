@@ -172,13 +172,17 @@ Lee específicamente **§16.7** (Migración de repo existente) y **§16.6.1** (s
 
 ---
 
-## Caso 3 — Stack no-Python/no-Node (Java, Angular u otro)
+## Caso 3 — Stack sin reusable existente
 
 **Para el líder:** pide esto cuando el repo usa un stack para el que **no existe todavía** un reusable workflow en `trycore-co/.github`.
 
-> **React / Vite / Vitest / Node.js** → ya existe `reusable-pr-check-node.yml`. Usar **Caso 1** apuntando a ese reusable — no hace falta crear nada nuevo en el repo de la org.
+> **Reusable workflows disponibles actualmente (junio 2026):**
+> - **Python** → `reusable-pr-check-python.yml` → usar **Caso 1**
+> - **Node.js / React / Vite / Vitest** → `reusable-pr-check-node.yml` → usar **Caso 1**
+> - **Java/Maven / JHipster** → `reusable-pr-check-maven.yml` → usar **Caso 1**
+> - **Angular** → `reusable-pr-check-angular.yml` → usar **Caso 1**
 >
-> Este caso aplica para: **Java/Maven, Angular**, o cualquier otro stack que no tenga reusable todavía.
+> **Este caso aplica solo para stacks que NO están en la lista anterior** — por ejemplo Go, .NET, Ruby, etc.
 
 **Diferencia con los casos anteriores:** aquí hay que crear el reusable workflow primero en el repo de la org, y luego sí crear el wrapper en el repo del proyecto. Son dos repos distintos.
 
@@ -186,7 +190,7 @@ Lee específicamente **§16.7** (Migración de repo existente) y **§16.6.1** (s
 
 ---
 
-Necesito implementar el pipeline de CI/CD para este repositorio. El stack es **[indicar: Java/Maven, React/Vite, Angular, Node.js]**.
+Necesito implementar el pipeline de CI/CD para este repositorio. El stack es **[indicar el stack — asegurarse primero que no existe ya un reusable en la lista de Caso 3]**.
 
 Antes de generar cualquier archivo, lee la guía oficial completa en:
 https://github.com/trycore-co/.github/blob/main/docs/BUENAS-PRACTICAS-PIPELINE.md
@@ -195,6 +199,9 @@ https://github.com/trycore-co/.github/blob/main/docs/BUENAS-PRACTICAS-PIPELINE.m
 - `SONAR_TOKEN` ya es secret de organización en `trycore-co`
 - `SONAR_HOST_URL` ya es variable de organización en `trycore-co`
 - El reusable workflow para Python ya existe — **no lo toques**
+- El reusable workflow para Node.js ya existe — **no lo toques**
+- El reusable workflow para Java/Maven ya existe — **no lo toques**
+- El reusable workflow para Angular ya existe — **no lo toques**
 
 **Lo que debes hacer — en orden:**
 
