@@ -1,7 +1,7 @@
 # Jenkins CI/CD — Política de despliegue continuo
 > **Aplica a:** proyectos Trycore donde Jenkins opera on-premise en la red del cliente.  
 > **Complementa:** [Guía de Buenas Prácticas CI/CD](BUENAS-PRACTICAS-PIPELINE.md) — leer primero esa guía para GitHub Actions, SonarQube, Trivy y Jenkinsfile variables.  
-> **Última actualización:** 2026-06-16
+> **Última actualización:** 2026-06-17
 
 ---
 
@@ -61,7 +61,9 @@ El PAT de GitHub **no** es el mismo token que `SONAR_TOKEN` de GitHub Actions. E
 
 > Este proceso se hace **una vez por proyecto**, desde la UI de Jenkins.
 
-1. Entrar a Jenkins y navegar al **folder del proyecto** (ej: `Trycore → AI-hub`)
+> ⚠️ **Crear siempre dentro del folder correcto.** En Jenkins la ruta del job forma parte de su URL y de los reportes. Si el job se crea en el folder equivocado (ej: directamente en `Trycore/` en vez de `Trycore/DocflySaaS/`), hay que recrearlo — los jobs no se mueven, solo se eliminan y vuelven a crear. Ver §9.1.
+
+1. Entrar a Jenkins y navegar al **folder del proyecto** (ej: `Trycore → DocflySaaS`)
 2. Click en **"New Item"** (panel izquierdo)
 3. Escribir el nombre del job (ej: `deploy-ia-hub`) → seleccionar **"Pipeline"** → OK
 4. Configurar:
@@ -76,6 +78,8 @@ El PAT de GitHub **no** es el mismo token que `SONAR_TOKEN` de GitHub Actions. E
 5. **Save** → verificar con un build manual: **Build with Parameters** → ejecutar
 
 > ⚠️ Los IDs de credencial del Jenkinsfile deben coincidir **exactamente** con los IDs registrados en Jenkins. Si copias un Jenkinsfile de otro proyecto, revisa el ID de la credencial de GitHub y el de Google Chat antes del primer build.
+>
+> ⚠️ **Crear las credenciales ANTES del primer build.** Si `gchat-webhook-<proyecto>` o `github-pat-<proyecto>` no existen cuando corre el pipeline, el bloque `post { failure }` falla silenciosamente al intentar notificar — el pipeline reporta error pero no queda claro el motivo. La sección de notificaciones tiene `try/catch` para que no tumbe el resultado, pero el build ya se marcó como fallo antes. Ver §9.2.
 
 ### 3.4 Crear la credencial de Google Chat — trampa del CSRF
 
@@ -294,6 +298,166 @@ Los Jenkinsfiles listos por tecnología están en el repositorio de estrategia C
 | `Jenkinsfile.angular` | Frontend Angular |
 | `Jenkinsfile.go` | Servicios Go |
 | `Jenkinsfile.rollback` | Job de rollback manual (dos estrategias) |
+
+---
+
+## 9. Errores frecuentes y soluciones
+
+Esta sección recoge errores reales ocurridos en despliegues Trycore. Cada caso incluye síntoma, causa raíz y solución.
+
+---
+
+### 9.1 Job creado en la carpeta incorrecta
+
+**Síntoma:** El job existe pero está en una ruta diferente a la esperada (ej: `Trycore/deploy-docfly-core` en vez de `Trycore/DocflySaas/deploy-docfly-core`). Los reportes de Poll SCM y las URLs de notificación apuntan a la ruta incorrecta.
+
+**Causa:** Se creó el item con "New Item" estando en el folder padre en vez del subfolder del proyecto.
+
+**Solución:** Los jobs en Jenkins no se pueden mover. Hay que:
+1. Anotar la configuración del job incorrecto (URL del repo, credencial, Script Path, ramas)
+2. Eliminarlo: entrar al job → panel izquierdo → **"Delete Pipeline"**
+3. Crear el job nuevo desde el folder correcto siguiendo §3.3
+
+---
+
+### 9.2 Pipeline falla con error de checkout en el primer build (o tras múltiples commits rápidos)
+
+**Síntoma:** El stage `Checkout` falla con `ERROR: Error fetching remote repo 'origin'` o exit code 128. Builds posteriores al mismo commit también fallan.
+
+**Causa A — Poll SCM disparó múltiples builds simultáneos:** Si se hacen varios commits en poco tiempo, el Poll SCM puede encolar varios builds. Con `disableConcurrentBuilds()`, los builds se ejecutan en secuencia, pero si el primer build está haciendo `git fetch` cuando arranca el segundo, GitHub puede responder con rate-limit (exit code 128).
+
+**Causa B — Repositorio privado sin credencial configurada:** La credencial GitHub no está asignada al job o el ID no coincide con el del Jenkinsfile.
+
+**Solución:**
+- Verificar que el Jenkinsfile tiene `disableConcurrentBuilds()` en el bloque `options {}`.
+- Esperar que los builds en cola terminen y lanzar un build manual limpio con **Build with Parameters**.
+- Si persiste, revisar que la credencial GitHub del job (campo *Credentials* en la configuración) existe en Jenkins y que su ID coincide con `GH_CRED_ID` en el Jenkinsfile.
+
+---
+
+### 9.3 Credenciales de notificación no existen — pipeline falla en `post`
+
+**Síntoma:** El deploy y el health check pasan correctamente, pero el pipeline termina en `FAILURE`. En el console log aparece algo como `org.jenkinsci.plugins.credentialsbinding.impl.CredentialNotFoundException` en el bloque `post`.
+
+**Causa:** Las credenciales `gchat-webhook-<proyecto>` y/o `github-pat-<proyecto>` no fueron creadas en Jenkins antes del primer build.
+
+**Solución:** Crear ambas credenciales siguiendo §3.4 (Script Console de Groovy es el método más confiable). Verificar en **Manage Jenkins → Credentials** que aparecen con el ID exacto que usa el Jenkinsfile. Luego relanzar el build.
+
+---
+
+### 9.4 Contenedores PostgreSQL salen inmediatamente (exit code 1) con postgres:17+
+
+**Síntoma:** Los contenedores de PostgreSQL arrancan y mueren en segundos. `docker logs <contenedor>` muestra:
+```
+initdb: error: directory "/var/lib/postgresql/data" exists but is not empty
+```
+o simplemente el contenedor sale sin mensaje de error.
+
+**Causa:** A partir de **postgres:17**, el directorio de datos por defecto dentro del contenedor cambió de `/var/lib/postgresql/data` a `/var/lib/postgresql`. Los volúmenes del `docker-compose.yml` que apuntan a `/var/lib/postgresql/data` dejan de funcionar con estas imágenes.
+
+**Solución:** Actualizar el mount del volumen en el `docker-compose.yml`:
+
+```yaml
+# ❌ Incorrecto para postgres:17+
+volumes:
+  - pg_data:/var/lib/postgresql/data
+
+# ✅ Correcto para postgres:17+
+volumes:
+  - pg_data:/var/lib/postgresql
+```
+
+Si ya existen volúmenes con datos del stack anterior, es necesario eliminarlos antes de recrear los contenedores (previa confirmación de que los datos son recuperables o prescindibles en DEV):
+```bash
+docker volume rm <proyecto>_gateway_pg_data <proyecto>_core_pg_data ...
+```
+
+---
+
+### 9.5 Build del gateway falla con `GLIBC_2.28 not found` — Node.js en servidores Ubuntu 18.04
+
+**Síntoma:** El stage `Build imagen (Jib)` falla durante `npm install` con:
+```
+/path/to/node: /lib/x86_64-linux-gnu/libc.so.6: version 'GLIBC_2.28' not found
+```
+
+**Causa:** El servidor Jenkins corre Ubuntu 18.04 LTS (glibc 2.27). A partir de Node.js 18, los binarios oficiales de `nodejs.org` se compilan contra RHEL 8 (glibc 2.28) — ninguna versión de Node.js 18, 20 o 24 puede ejecutarse directamente en Ubuntu 18.04. El `frontend-maven-plugin` descarga el binario oficial de Node y lo ejecuta en el host, encontrando la incompatibilidad.
+
+**Solución:** Ejecutar el build Maven completo dentro de un contenedor con glibc reciente, usando `jib:buildTar` en vez de `jib:dockerBuild` (buildTar no necesita el socket Docker — genera un tar que se carga con `docker load`):
+
+```groovy
+stage('Build imagen (Jib)') {
+  steps {
+    dir("${env.SERVICE_DIR}") {
+      sh '''
+        chmod +x mvnw
+        docker run --rm \
+          -v "$(pwd)":/workspace \
+          -v /var/lib/jenkins/.m2:/root/.m2 \
+          -w /workspace \
+          eclipse-temurin:21-jdk-jammy \
+          ./mvnw -ntp -B -Pprod package -DskipTests jib:buildTar
+        LOADED=$(docker load -i target/jib-image.tar | awk '/Loaded image/{print $NF}')
+        docker tag "$LOADED" "${APP_NAME}:latest"
+      '''
+    }
+  }
+}
+```
+
+`eclipse-temurin:21-jdk-jammy` usa Ubuntu 22.04 (glibc 2.35) y soporta cualquier versión de Node.js. El cache Maven del host (`/var/lib/jenkins/.m2`) se monta para no re-descargar dependencias en cada build.
+
+> **Nota:** si en el stage de rollback se usa `jib:dockerBuild` en otro proyecto del mismo servidor, también deberá migrar a este patrón.
+
+---
+
+### 9.6 Timezone de contenedores en UTC — logs y timestamps incorrectos
+
+**Síntoma:** Los logs de los contenedores muestran timestamps en UTC aunque el servidor está en `America/Bogota`. Esto dificulta correlacionar logs con eventos reportados por usuarios.
+
+**Causa:** Docker no hereda el timezone del host. Por defecto todos los contenedores usan UTC.
+
+**Solución:** Agregar estos dos volúmenes a **todos** los servicios del `docker-compose.yml`:
+
+```yaml
+volumes:
+  - /etc/timezone:/etc/timezone:ro
+  - /etc/localtime:/etc/localtime:ro
+```
+
+Recrear los contenedores después del cambio:
+```bash
+docker compose -p <proyecto> -f docker-compose.yml up -d --force-recreate
+```
+
+Verificar: `docker exec <contenedor> date` debe mostrar la hora en la zona correcta.
+
+---
+
+### 9.7 Keycloak no reimporta el realm al reiniciar — usuarios sin roles
+
+**Síntoma (aplica a proyectos JHipster):** El realm existe y los usuarios pueden autenticarse, pero al intentar acceder a la aplicación aparece *"No tiene permisos para acceder a la página"*. Los usuarios del realm no tienen grupos (`ROLE_ADMIN`, `ROLE_USER`) asignados aunque el `realm.json` del repo sí los define.
+
+**Causa:** Keycloak con `start-dev --import-realm` usa estrategia `SKIP` por defecto: si el realm ya existe en el volumen interno, **no reimporta**. Si el contenedor fue recreado desde una imagen o volumen anterior donde los grupos no estaban configurados, la asignación de grupos no se aplica.
+
+**Solución inmediata** (sin reiniciar Keycloak):
+```bash
+# Obtener el ID del usuario
+USER_ID=$(docker exec <keycloak-container> /opt/keycloak/bin/kcadm.sh \
+  config credentials --server http://localhost:9080 --realm master \
+  --user admin --password admin 2>/dev/null && \
+  docker exec <keycloak-container> /opt/keycloak/bin/kcadm.sh \
+  get users -r jhipster -q username=admin | python3 -c \
+  "import sys,json; print(json.load(sys.stdin)[0]['id'])")
+
+# Agregar al grupo Admins (ajustar el ID del grupo al del realm)
+docker exec <keycloak-container> /opt/keycloak/bin/kcadm.sh \
+  update users/$USER_ID/groups/<group-id> -r jhipster
+```
+
+**Solución permanente:** Verificar que el `realm.json` del repo ya tiene los usuarios con el campo `"groups": ["/Admins", "/Users"]`. Si es correcto, el problema solo ocurre con volúmenes de instancias anteriores — un ambiente DEV fresco desde cero importará correctamente.
+
+Para forzar reimportación: eliminar el volumen interno de Keycloak (`dev-file`) y recrear el contenedor.
 
 ---
 
