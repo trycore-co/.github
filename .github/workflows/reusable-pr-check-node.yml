@@ -92,7 +92,7 @@ jobs:
         if: ${{ inputs.has-tests }}
         working-directory: ${{ inputs.service-dir }}
         continue-on-error: ${{ inputs.tests-continue-on-error }}
-        run: npm run test -- --reporter=verbose --reporter=junit --outputFile=test-results.xml --coverage --pool=vmForks
+        run: npm run test -- --reporter=verbose --reporter=junit --outputFile=test-results.xml --coverage --pool=forks
 
       - name: Encabezado Unit Tests en summary
         if: ${{ inputs.has-tests }}
