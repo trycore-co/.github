@@ -38,6 +38,11 @@ on:
         required: false
         type: string
         default: 'src/main.tsx,src/App.tsx'
+      runner:
+        description: 'Runner label. Usar "self-hosted" para el runner on-prem de la org.'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
     secrets:
       SONAR_TOKEN:
         required: true
@@ -46,7 +51,7 @@ jobs:
   # ── 1. Build + Tests + SonarQube ────────────────────────────────────────────
   build-test-sonar:
     name: Build, Tests & SonarQube
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     permissions:
       checks: write
@@ -206,7 +211,7 @@ jobs:
   # ── 2. SCA: Trivy ───────────────────────────────────────────────────────────
   sca-trivy:
     name: SCA — Trivy
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     permissions:
       security-events: write
@@ -319,7 +324,7 @@ jobs:
   # para CVEs del ecosistema JavaScript. CRITICAL bloquea el merge; HIGH es informativo.
   sca-npm-audit:
     name: SCA — npm audit (OWASP A06)
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     permissions:
       contents: read
