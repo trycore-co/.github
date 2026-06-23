@@ -366,7 +366,8 @@ El job `sca-trivy` instala trivy manualmente y lo ejecuta **dos veces**: una par
               if sev in ('CRITICAL','HIGH','MEDIUM'):
                 fix = v.get('FixedVersion','') or 'Sin fix'
                 rows.append(f\"| {v.get('PkgName','?')} | {sev} | {v.get('VulnerabilityID','?')} | {v.get('InstalledVersion','?')} | {fix} |\")
-          print('\n'.join(rows[:60]))
+          print('
+'.join(rows[:60]))
           " 2>/dev/null || echo "")
             if [ -n "$DETAIL" ]; then
               {
@@ -3108,7 +3109,8 @@ Si ese patrón E2E eventualmente es común a varios proyectos Node, se puede cre
 
 **Síntoma:** el Quality Gate aparece como `⚠️ UNKNOWN` en el Step Summary, aunque el SonarQube Scan completa sin errores. El step `sonarqube-quality-gate-action` también pasa (con `continue-on-error: true`), pero la métrica no refleja el estado real del proyecto.
 
-**Causa:** la variable de organización `SONAR_HOST_URL` tenía un carácter de whitespace invisible (salto de línea `\n` o espacio) al inicio o al final del valor. Al usarla directamente con `${{ vars.SONAR_HOST_URL }}` en el `env:` del step de Sonar, la URL resultante era inválida y las llamadas curl a la API de SonarQube fallaban silenciosamente.
+**Causa:** la variable de organización `SONAR_HOST_URL` tenía un carácter de whitespace invisible (salto de línea `
+` o espacio) al inicio o al final del valor. Al usarla directamente con `${{ vars.SONAR_HOST_URL }}` en el `env:` del step de Sonar, la URL resultante era inválida y las llamadas curl a la API de SonarQube fallaban silenciosamente.
 
 **Diagnóstico rápido:**
 ```bash
@@ -3142,7 +3144,8 @@ El workaround del `tr -d '[:space:]'` es defensivo y debe mantenerse, pero tambi
 3. Borrar el contenido completo del campo y volver a escribir solo: `https://docs.trycore.co:9000`  (sin espacios, sin saltos de línea)
 4. Guardar
 
-> **Nota:** el textarea de GitHub no muestra saltos de línea invisibles — un `\n` al final del valor se ve igual que un valor limpio. Si la variable fue creada via script o copia/pega desde una terminal, es frecuente que arrastre un newline.
+> **Nota:** el textarea de GitHub no muestra saltos de línea invisibles — un `
+` al final del valor se ve igual que un valor limpio. Si la variable fue creada via script o copia/pega desde una terminal, es frecuente que arrastre un newline.
 
 **Impacto:** afecta cualquier reusable workflow que use `${{ vars.SONAR_HOST_URL }}` directamente en un `env:` sin sanitizar. Al migrar a `env.SONAR_HOST_URL` (seteado desde `$GITHUB_ENV`), el fix aplica automáticamente a todos los repos que usen el reusable — no requiere cambios en los wrappers de cada proyecto.
 
@@ -3624,3 +3627,120 @@ env:
 ### 17.6 Cuándo NO separar en dos workflows
 
 Si el proyecto tiene un script de build que necesita frontend + backend juntos (ej. un test E2E que levanta ambos), ese step va en Jenkins post-deploy (§1, §13) — no en el PR check de GitHub Actions. El PR check siempre valida cada capa de forma independiente.
+---
+
+## 18. Runner self-hosted — `trycore-server`
+
+La org `trycore-co` tiene un runner self-hosted registrado en el servidor de desarrollo interno (`192.168.1.100`). Está disponible para cualquier proyecto de la org.
+
+### 18.1 Datos del runner
+
+| Campo | Valor |
+|---|---|
+| Nombre | `trycore-server` |
+| Labels | `self-hosted`, `Linux`, `X64` |
+| Scope | Org `trycore-co` |
+| Host | `192.168.1.100` |
+| Imagen Docker | `trycore-runner:latest` |
+| Base | `myoung34/github-runner:latest` (Ubuntu 20.04) |
+| Dockerfile | `/home/trycore/github-runner/Dockerfile` en el servidor |
+
+### 18.2 Herramientas pre-instaladas
+
+Estas herramientas están disponibles en todos los jobs sin ningún step de instalación:
+
+| Herramienta | Versión | Uso |
+|---|---|---|
+| `trivy` | 0.71.2 | Scanner SCA — `reusable-pr-check-python.yml`, `reusable-pr-check-node.yml` |
+| `java` (OpenJDK 17) | 17.0.15 | Proyectos Maven/Gradle |
+| `psql` (PostgreSQL client) | 12 | Inicializar DBs de test en E2E workflows |
+| `python3` | 3.8.10 | Scripts Sonar QG en todos los reusables |
+| `pip3` | 20.0 | Instalar dependencias Python en CI |
+| `curl` | 7.68 | Llamadas API (Sonar, webhooks) |
+| `git` | bundled | Checkout de repos |
+| `docker` CLI | vía socket | Levantar contenedores de servicios (postgres, redis) |
+
+Las herramientas de lenguaje (Node.js, Python runtime, Java SDK completo) se instalan por `actions/setup-*` en cada run, igual que en `ubuntu-latest`.
+
+### 18.3 Usar el runner en un workflow
+
+```yaml
+jobs:
+  ci:
+    runs-on: self-hosted          # en vez de ubuntu-latest
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true  # requerido — runner v2.335 con Node 20
+    steps:
+      # ... pasos normales ...
+```
+
+### 18.4 Levantar postgres en el runner (networking)
+
+El runner corre dentro de un contenedor Docker llamado `github-runner`. Para que `localhost` resuelva a un postgres de CI, el contenedor de postgres debe compartir el network namespace del runner:
+
+```yaml
+- name: Start postgres
+  run: |
+    docker rm -f ci-postgres 2>/dev/null || true
+    docker run -d --name ci-postgres \
+      --network container:github-runner \   # ← clave: comparte red del runner
+      -e POSTGRES_USER=testuser \
+      -e POSTGRES_PASSWORD=testpass \
+      -e POSTGRES_DB=testdb \
+      pgvector/pgvector:pg17
+    until docker exec ci-postgres pg_isready -U testuser; do sleep 1; done
+- name: Stop postgres
+  if: always()
+  run: docker rm -f ci-postgres 2>/dev/null || true
+```
+
+Con esto, `localhost:5432` dentro del job apunta directamente al contenedor de postgres, sin mapeo de puertos en el host.
+
+### 18.5 Cuándo usar el runner self-hosted
+
+**Usar cuando:**
+- El workflow necesita conectarse a servicios de la red interna (Sonar interno, Jenkins, DBs)
+- Tests de integración/E2E que necesitan postgres, redis u otros servicios pesados
+- Se quieren conservar minutos de GitHub Actions del plan de la org
+- Jobs largos (>10 min) que superan el timeout razonable en runners gratuitos
+
+**No usar cuando:**
+- Reusable workflows de la org — siempre usan `ubuntu-latest`; el caller decide el runner
+- Proyectos fuera de la org `trycore-co`
+- El job necesita un entorno limpio garantizado — el runner es persistente y puede tener estado previo
+
+### 18.6 Actualizar la imagen del runner
+
+Cuando se necesite agregar nuevas herramientas a la imagen:
+
+```bash
+# 1. Editar el Dockerfile en el servidor
+ssh trycore@192.168.1.100
+nano /home/trycore/github-runner/Dockerfile
+
+# 2. Reconstruir la imagen
+docker build -t trycore-runner:latest /home/trycore/github-runner/
+
+# 3. Obtener un token fresco y reemplazar el contenedor
+NEW_TOKEN=$(gh api orgs/trycore-co/actions/runners/registration-token --method POST --jq '.token')
+docker stop github-runner && docker rm github-runner
+docker run -d --name github-runner --restart always \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -e RUNNER_NAME=trycore-server \
+  -e RUNNER_TOKEN=$NEW_TOKEN \
+  -e RUNNER_SCOPE=org \
+  -e ORG_NAME=trycore-co \
+  -e LABELS=self-hosted,Linux,X64 \
+  -e RUNNER_WORKDIR=/tmp/github-runner \
+  trycore-runner:latest
+```
+
+El runner se registra automáticamente en la org y queda listo en ~10 segundos.
+
+### 18.7 Lección aprendida — `localhost` no resuelve al host desde el runner
+
+**Síntoma:** `psql: error: connection to server on socket "/var/run/postgresql/.s.PGSQL.5432" failed` o `Connection refused` al conectarse a un puerto mapeado en el host.
+
+**Causa:** el runner corre dentro de un contenedor Docker. `localhost` apunta al contenedor del runner, no al host (`192.168.1.100`). Un puerto mapeado en el host (`-p 5432:5432`) es accesible desde el host, pero no desde dentro del contenedor del runner.
+
+**Solución:** usar `--network container:github-runner` al levantar el contenedor de servicio (ver §18.4). Esto comparte el network namespace y hace que `localhost:5432` resuelva correctamente.
