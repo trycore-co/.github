@@ -340,18 +340,11 @@ La forma más confiable desde curl:
 
 ```bash
 # 1. Obtener crumb guardando las cookies en archivo
-curl -s -u "admin:PASSWORD" \
-  -c /tmp/jenkins-cookies.txt \
-  "http://<jenkins>/crumbIssuer/api/json"
+curl -s -u "admin:PASSWORD"   -c /tmp/jenkins-cookies.txt   "http://<jenkins>/crumbIssuer/api/json"
 # Tomar el valor de "crumb" de la respuesta
 
 # 2. Crear la credencial usando LAS MISMAS cookies
-curl -s -u "admin:PASSWORD" \
-  -b /tmp/jenkins-cookies.txt \
-  -c /tmp/jenkins-cookies.txt \
-  -H "Jenkins-Crumb: <CRUMB-DEL-PASO-1>" \
-  -X POST "http://<jenkins>/credentials/store/system/domain/_/createCredentials" \
-  --data-urlencode 'json={
+curl -s -u "admin:PASSWORD"   -b /tmp/jenkins-cookies.txt   -c /tmp/jenkins-cookies.txt   -H "Jenkins-Crumb: <CRUMB-DEL-PASO-1>"   -X POST "http://<jenkins>/credentials/store/system/domain/_/createCredentials"   --data-urlencode 'json={
     "": "0",
     "credentials": {
       "scope": "GLOBAL",
@@ -387,6 +380,45 @@ println "Credencial creada OK"
 ```
 
 ---
+
+
+---
+
+## Caso 5 — Usar el runner self-hosted de la organización
+
+**Para el líder:** por defecto los workflows usan runners de GitHub (`ubuntu-latest`). El runner self-hosted (`trycore-server`) está disponible para proyectos que necesiten acceso a la red interna, postgres real, o quieran ahorrar minutos de GitHub Actions.
+
+**Para la IA 🤖 — copiar y pegar esto en el chat:**
+
+---
+
+Necesito configurar este workflow para que corra en el runner self-hosted `trycore-server` de la org `trycore-co`.
+
+1. Cambia `runs-on: ubuntu-latest` por `runs-on: self-hosted` en el workflow.
+2. Si el workflow levanta una base de datos PostgreSQL, usa `--network container:github-runner` al crear el contenedor de postgres para que `localhost:5432` resuelva correctamente desde dentro del runner.
+3. Agrega `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true` al bloque `env` del job si usas `actions/setup-node@v4` o `actions/checkout@v4`.
+
+Herramientas ya pre-instaladas en el runner (no necesitan pasos de instalación):
+- `trivy` — scanner SCA
+- `java 17` (OpenJDK) — proyectos Maven/Gradle
+- `psql` (PostgreSQL client 12) — inicializar DBs de test
+- `python3`, `pip3`, `curl` — scripts de Sonar QG
+
+---
+
+**Cuándo usar el runner self-hosted:**
+- El workflow necesita conectarse a servicios internos (Jenkins, Sonar en red local)
+- El proyecto requiere postgres real para tests de integración/E2E
+- Se quieren ahorrar minutos de GitHub Actions del plan de la org
+- Tests E2E completos con Playwright/Selenium que duran >10 min
+
+**Cuándo NO usar el runner self-hosted:**
+- Reusable workflows (siempre usan `ubuntu-latest`, el caller controla el runner)
+- Proyectos que no están en la org `trycore-co`
+- CI muy ligero (lint + type-check) donde el overhead no justifica el cambio
+
+**Referencia técnica:** §18 de la [Guía de Buenas Prácticas](BUENAS-PRACTICAS-PIPELINE.md#18-runner-self-hosted)
+
 
 ## Referencia
 
