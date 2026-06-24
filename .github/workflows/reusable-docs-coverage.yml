@@ -1,0 +1,82 @@
+name: Reusable — Doc Coverage Check (Capa 1)
+# Workflow reutilizable: verifica que cada PR que toca código también toque documentación.
+# Uso:
+#   jobs:
+#     doc-coverage:
+#       uses: trycore-co/.github/.github/workflows/reusable-docs-coverage.yml@main
+#       with:
+#         base_ref: develop
+#       secrets: inherit
+
+on:
+  workflow_call:
+    inputs:
+      base_ref:
+        description: 'Rama base para el diff'
+        type: string
+        default: 'develop'
+      code_zones:
+        description: 'Prefijos de zonas de código separados por coma'
+        type: string
+        default: 'gateway/,core/,extractionWorker/'
+      doc_zones:
+        description: 'Prefijos de zonas de docs separados por coma'
+        type: string
+        default: 'docs/,openspec/'
+      data_model_path:
+        description: 'Ruta del archivo de modelo de datos'
+        type: string
+        default: 'docs/architecture/data-model.md'
+      runner:
+        description: 'Runner a usar'
+        type: string
+        default: 'self-hosted'
+
+jobs:
+  doc-coverage:
+    name: Doc Coverage Check
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run doc coverage check
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref || inputs.base_ref }}
+          CODE_ZONES: ${{ inputs.code_zones }}
+          DOC_ZONES: ${{ inputs.doc_zones }}
+          DATA_MODEL_PATH: ${{ inputs.data_model_path }}
+        run: python scripts/ci/docs-coverage-check.py
+
+      - name: Comentar en el PR si falla
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## \U0001f4cb Una cosa antes de continuar
+
+            Hola! El check de cobertura documental detectó que este PR modifica código pero los docs no reflejan esos cambios todavía.
+
+            Esto no es un bloqueo permanente — solo asegurémonos de que el conocimiento quede registrado junto con el código.
+
+            **¿Qué falta?** Revisa el [resumen del job](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) para ver exactamente qué necesita actualizarse.
+
+            Cuando hagas push con los cambios de docs, el check corre de nuevo automáticamente. \U0001f680
+
+            > ¿Es un hotfix o refactor sin cambio de comportamiento? El líder técnico puede aprobar el PR dejando un comentario explicando la excepción.`
+            })
