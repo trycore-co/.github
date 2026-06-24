@@ -114,6 +114,7 @@ jobs:
       sonar-project-name: Nombre Legible
       java-version: '17'
       has-tests: true
+      # runner: self-hosted   # ← descomentar para usar la flota Jarvis (sin costo de minutos)
     secrets: inherit
 ```
 
@@ -140,6 +141,7 @@ jobs:
       sonar-project-name: Nombre Legible Frontend
       node-version: '20'
       has-tests: true
+      # runner: self-hosted   # ← descomentar para usar la flota Jarvis (sin costo de minutos)
     secrets: inherit
 ```
 

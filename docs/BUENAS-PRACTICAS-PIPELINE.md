@@ -3629,11 +3629,28 @@ env:
 Si el proyecto tiene un script de build que necesita frontend + backend juntos (ej. un test E2E que levanta ambos), ese step va en Jenkins post-deploy (§1, §13) — no en el PR check de GitHub Actions. El PR check siempre valida cada capa de forma independiente.
 ---
 
-## 18. Runner self-hosted — `trycore-server`
+## 18. Runners self-hosted — Flota Jarvis y `trycore-server`
 
-La org `trycore-co` tiene un runner self-hosted registrado en el servidor de desarrollo interno (`192.168.1.100`). Está disponible para cualquier proyecto de la org.
+La org `trycore-co` dispone de dos conjuntos de runners self-hosted en el servidor de desarrollo interno (`192.168.1.100`). Ambos están disponibles para cualquier proyecto de la org.
 
-### 18.1 Datos del runner
+### 18.1 Runners disponibles
+
+#### Flota Jarvis — 10 workers en paralelo (COBRA / proyectos intensivos)
+
+| Campo | Valor |
+|---|---|
+| Nombres | `jarvis-1` … `jarvis-10` |
+| Labels | `self-hosted`, `Linux`, `X64` |
+| Scope | Org `trycore-co` |
+| Host | `192.168.1.100` |
+| Imagen Docker | `trycore-runner:latest` |
+| Base | `myoung34/github-runner:latest` (Ubuntu 20.04) |
+| Compose | `~/github-runner/docker-compose.yml` (10 réplicas) |
+| Dockerfile | `~/github-runner/Dockerfile` |
+
+Los 10 runners se levantan con `docker compose up -d` desde `~/github-runner/`. El `ACCESS_TOKEN` (PAT de org) está en `~/github-runner/.env` y se usa para auto-registro en GitHub.
+
+#### `trycore-server` — runner único (proyectos generales / IA Hub)
 
 | Campo | Valor |
 |---|---|
@@ -3641,9 +3658,8 @@ La org `trycore-co` tiene un runner self-hosted registrado en el servidor de des
 | Labels | `self-hosted`, `Linux`, `X64` |
 | Scope | Org `trycore-co` |
 | Host | `192.168.1.100` |
-| Imagen Docker | `trycore-runner:latest` |
-| Base | `myoung34/github-runner:latest` (Ubuntu 20.04) |
-| Dockerfile | `/home/trycore/github-runner/Dockerfile` en el servidor |
+| Imagen Docker | `trycore-runner:latest` (misma imagen) |
+| Compose | `~/github-runner/docker-compose.yml` (servicio `github-runner`) |
 
 ### 18.2 Herramientas pre-instaladas
 
@@ -3651,8 +3667,8 @@ Estas herramientas están disponibles en todos los jobs sin ningún step de inst
 
 | Herramienta | Versión | Uso |
 |---|---|---|
-| `trivy` | 0.71.2 | Scanner SCA — `reusable-pr-check-python.yml`, `reusable-pr-check-node.yml` |
-| `java` (OpenJDK 17) | 17.0.15 | Proyectos Maven/Gradle |
+| `trivy` | latest | Scanner SCA — todos los reusables |
+| `java` (OpenJDK 21) | 21.0.x | Entorno base; Maven/Gradle instalan Java 17 vía `setup-java` |
 | `psql` (PostgreSQL client) | 12 | Inicializar DBs de test en E2E workflows |
 | `python3` | 3.8.10 | Scripts Sonar QG en todos los reusables |
 | `pip3` | 20.0 | Instalar dependencias Python en CI |
@@ -3660,9 +3676,14 @@ Estas herramientas están disponibles en todos los jobs sin ningún step de inst
 | `git` | bundled | Checkout de repos |
 | `docker` CLI | vía socket | Levantar contenedores de servicios (postgres, redis) |
 
-Las herramientas de lenguaje (Node.js, Python runtime, Java SDK completo) se instalan por `actions/setup-*` en cada run, igual que en `ubuntu-latest`.
+Las herramientas de lenguaje (Node.js runtime, Java SDK 17, etc.) se instalan por `actions/setup-*` en cada run, igual que en `ubuntu-latest`.
+
+> **⚠️ Variable de entorno crítica para Java:**
+> La imagen tiene `ENV JAVA_TOOL_OPTIONS="-Djava.net.preferIPv4Stack=true"`. Esta variable es **obligatoria** en los containers Jarvis porque el kernel tiene IPv6 configurado pero sin ruta al exterior; Java intenta conectar a registros (Maven Central, plugins) por IPv6 primero y se cuelga indefinidamente. Con la variable, Java usa IPv4 directamente. No eliminar esta línea del Dockerfile. Ver §18.8 para la causa raíz.
 
 ### 18.3 Usar el runner en un workflow
+
+#### Workflow directo (no reusable)
 
 ```yaml
 jobs:
@@ -3674,9 +3695,31 @@ jobs:
       # ... pasos normales ...
 ```
 
+#### Reusable workflows de la org (Maven · Angular · Node)
+
+Los reusables `reusable-pr-check-maven.yml`, `reusable-pr-check-angular.yml` y `reusable-pr-check-node.yml` exponen un input `runner` que permite al caller elegir el runner:
+
+```yaml
+jobs:
+  check:
+    uses: trycore-co/.github/.github/workflows/reusable-pr-check-maven.yml@main
+    permissions:
+      checks: write
+      contents: read
+      security-events: write
+      actions: read
+    with:
+      sonar-project-key: 'MiProyecto:Servicio'
+      sonar-project-name: 'Servicio'
+      runner: self-hosted          # ← omitir para usar ubuntu-latest (default)
+    secrets: inherit
+```
+
+> El input `runner` **no existe** en `reusable-pr-check-python.yml` (ese reusable siempre usa `ubuntu-latest`). Para Python con runner self-hosted, definir `runs-on: self-hosted` directamente en el wrapper.
+
 ### 18.4 Levantar postgres en el runner (networking)
 
-El runner corre dentro de un contenedor Docker llamado `github-runner`. Para que `localhost` resuelva a un postgres de CI, el contenedor de postgres debe compartir el network namespace del runner:
+El runner corre dentro de un contenedor Docker. Para que `localhost` resuelva a un postgres de CI, el contenedor de postgres debe compartir el network namespace del runner:
 
 ```yaml
 - name: Start postgres
@@ -3701,41 +3744,32 @@ Con esto, `localhost:5432` dentro del job apunta directamente al contenedor de p
 **Usar cuando:**
 - El workflow necesita conectarse a servicios de la red interna (Sonar interno, Jenkins, DBs)
 - Tests de integración/E2E que necesitan postgres, redis u otros servicios pesados
-- Se quieren conservar minutos de GitHub Actions del plan de la org
+- Se quieren conservar minutos de GitHub Actions del plan de la org (el plan gratuito es limitado)
 - Jobs largos (>10 min) que superan el timeout razonable en runners gratuitos
 
 **No usar cuando:**
-- Reusable workflows de la org — siempre usan `ubuntu-latest`; el caller decide el runner
 - Proyectos fuera de la org `trycore-co`
 - El job necesita un entorno limpio garantizado — el runner es persistente y puede tener estado previo
 
-### 18.6 Actualizar la imagen del runner
+### 18.6 Actualizar la imagen del runner (flota Jarvis)
 
-Cuando se necesite agregar nuevas herramientas a la imagen:
+Cuando se necesite agregar nuevas herramientas o cambiar configuración de la imagen:
 
 ```bash
 # 1. Editar el Dockerfile en el servidor
 ssh trycore@192.168.1.100
-nano /home/trycore/github-runner/Dockerfile
+nano ~/github-runner/Dockerfile
 
-# 2. Reconstruir la imagen
-docker build -t trycore-runner:latest /home/trycore/github-runner/
+# 2. Reconstruir la imagen (usa cache — solo rebuilda capas modificadas)
+cd ~/github-runner && docker build -t trycore-runner:latest .
 
-# 3. Obtener un token fresco y reemplazar el contenedor
-NEW_TOKEN=$(gh api orgs/trycore-co/actions/runners/registration-token --method POST --jq '.token')
-docker stop github-runner && docker rm github-runner
-docker run -d --name github-runner --restart always \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -e RUNNER_NAME=trycore-server \
-  -e RUNNER_TOKEN=$NEW_TOKEN \
-  -e RUNNER_SCOPE=org \
-  -e ORG_NAME=trycore-co \
-  -e LABELS=self-hosted,Linux,X64 \
-  -e RUNNER_WORKDIR=/tmp/github-runner \
-  trycore-runner:latest
+# 3. Reemplazar los containers en docker-compose (se re-registran automáticamente)
+docker compose up -d
 ```
 
-El runner se registra automáticamente en la org y queda listo en ~10 segundos.
+> Los runners NO se interrumpen abruptamente si están corriendo un job: `docker compose up -d` recrea solo los containers que tienen imagen obsoleta, y los que tienen jobs activos esperan a que terminen (comportamiento de `restart: unless-stopped`). En la práctica, con 10 runners, el impacto es mínimo.
+
+El ACCESS_TOKEN en `.env` es un PAT de org y no caduca como los runner registration tokens. No es necesario renovarlo salvo que sea revocado.
 
 ### 18.7 Lección aprendida — `localhost` no resuelve al host desde el runner
 
@@ -3744,3 +3778,26 @@ El runner se registra automáticamente en la org y queda listo en ~10 segundos.
 **Causa:** el runner corre dentro de un contenedor Docker. `localhost` apunta al contenedor del runner, no al host (`192.168.1.100`). Un puerto mapeado en el host (`-p 5432:5432`) es accesible desde el host, pero no desde dentro del contenedor del runner.
 
 **Solución:** usar `--network container:github-runner` al levantar el contenedor de servicio (ver §18.4). Esto comparte el network namespace y hace que `localhost:5432` resuelva correctamente.
+
+### 18.8 Lección aprendida — Java SSL/TLS cuelga al descargar dependencias Maven
+
+**Síntoma:** el step de Maven (`./mvnw test sonar:sonar`) se cuelga indefinidamente o falla con:
+```
+Could not transfer artifact org.springframework.boot:spring-boot-starter-parent:pom:3.4.1
+from/to central (https://repo.maven.apache.org/maven2): Remote host terminated the handshake
+SSL peer shut down incorrectly
+```
+
+**Causa:** los containers Docker en Jarvis tienen IPv6 habilitado en el kernel pero **sin ruta de salida al exterior**. `curl` falla inmediatamente con `Network is unreachable` en IPv6 y reintenta por IPv4. Java (JSSE), en cambio, intenta conectar al AAAA record de Maven Central (Cloudflare) por IPv6, se queda esperando un timeout de red que puede durar minutos, y el TLS handshake nunca completa.
+
+La diferencia con `curl`: curl usa OpenSSL (que detecta ENETUNREACH inmediatamente), Java usa su propio stack TLS (JSSE) que no reacciona tan rápido al error de red.
+
+**Solución aplicada:** `ENV JAVA_TOOL_OPTIONS="-Djava.net.preferIPv4Stack=true"` en el Dockerfile. Esto hace que toda la JVM (incluyendo la instalada por `actions/setup-java`) use IPv4 exclusivamente.
+
+**Verificación:**
+```bash
+# Desde dentro de un container runner — debe responder "OK: 200 via TLS_AES_256_GCM_SHA384"
+docker exec runner-1 bash -c "java -cp /tmp TestSSL"
+```
+
+**Alcance:** aplica a los 10 containers de la flota Jarvis. Si se agrega una nueva máquina o se crea una imagen diferente para runners, esta variable debe estar presente.

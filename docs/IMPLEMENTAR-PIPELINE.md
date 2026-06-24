@@ -386,13 +386,39 @@ println "Credencial creada OK"
 
 ## Caso 5 — Usar el runner self-hosted de la organización
 
-**Para el líder:** por defecto los workflows usan runners de GitHub (`ubuntu-latest`). El runner self-hosted (`trycore-server`) está disponible para proyectos que necesiten acceso a la red interna, postgres real, o quieran ahorrar minutos de GitHub Actions.
+**Para el líder:** por defecto los workflows usan runners de GitHub (`ubuntu-latest`). La org dispone de dos conjuntos de runners self-hosted en `192.168.1.100`: la **flota Jarvis** (10 workers en paralelo, usada por COBRA y proyectos intensivos) y **`trycore-server`** (runner único para proyectos generales). Ambos comparten la misma imagen Docker.
+
+**Hay dos formas de activar el runner self-hosted según el tipo de workflow:**
+
+#### Opción A — Reusable workflows de la org (Maven · Angular · Node)
+
+Los reusables Maven, Angular y Node exponen un input `runner`. Añadirlo en el wrapper del proyecto:
+
+```yaml
+jobs:
+  check:
+    uses: trycore-co/.github/.github/workflows/reusable-pr-check-maven.yml@main
+    permissions:
+      checks: write
+      contents: read
+      security-events: write
+      actions: read
+    with:
+      sonar-project-key: 'MiProyecto:Servicio'
+      sonar-project-name: 'Servicio'
+      runner: self-hosted          # ← añadir esta línea
+    secrets: inherit
+```
+
+> El reusable Python **no** tiene input `runner` — usa siempre `ubuntu-latest`.
+
+#### Opción B — Workflow directo (no reusable) o Python
 
 **Para la IA 🤖 — copiar y pegar esto en el chat:**
 
 ---
 
-Necesito configurar este workflow para que corra en el runner self-hosted `trycore-server` de la org `trycore-co`.
+Necesito configurar este workflow para que corra en el runner self-hosted de la org `trycore-co`.
 
 1. Cambia `runs-on: ubuntu-latest` por `runs-on: self-hosted` en el workflow.
 2. Si el workflow levanta una base de datos PostgreSQL, usa `--network container:github-runner` al crear el contenedor de postgres para que `localhost:5432` resuelva correctamente desde dentro del runner.
@@ -400,9 +426,9 @@ Necesito configurar este workflow para que corra en el runner self-hosted `tryco
 
 Herramientas ya pre-instaladas en el runner (no necesitan pasos de instalación):
 - `trivy` — scanner SCA
-- `java 17` (OpenJDK) — proyectos Maven/Gradle
+- `java 21` (OpenJDK) — entorno base; Maven instala Java 17 vía `actions/setup-java`
 - `psql` (PostgreSQL client 12) — inicializar DBs de test
-- `python3`, `pip3`, `curl` — scripts de Sonar QG
+- `python3 3.8`, `pip3`, `curl` — scripts de Sonar QG
 
 ---
 
@@ -413,11 +439,10 @@ Herramientas ya pre-instaladas en el runner (no necesitan pasos de instalación)
 - Tests E2E completos con Playwright/Selenium que duran >10 min
 
 **Cuándo NO usar el runner self-hosted:**
-- Reusable workflows (siempre usan `ubuntu-latest`, el caller controla el runner)
 - Proyectos que no están en la org `trycore-co`
 - CI muy ligero (lint + type-check) donde el overhead no justifica el cambio
 
-**Referencia técnica:** §18 de la [Guía de Buenas Prácticas](BUENAS-PRACTICAS-PIPELINE.md#18-runner-self-hosted)
+**Referencia técnica:** §18 de la [Guía de Buenas Prácticas](BUENAS-PRACTICAS-PIPELINE.md#18-runners-self-hosted--flota-jarvis-y-trycore-server)
 
 
 ## Referencia
