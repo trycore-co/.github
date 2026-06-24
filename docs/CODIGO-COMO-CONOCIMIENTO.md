@@ -1,4 +1,4 @@
-# Código como Conocimiento — Guía para Líderes
+# Código como Conocimiento — Guía
 _Actualizado: 2026-06-24_
 
 > **¿Qué es esto?** Una capa automática que asegura que todo lo que el equipo construye también queda documentado. En proyectos con desarrollo acelerado por IA, el código crece más rápido de lo que la documentación puede seguirlo manualmente — este sistema lo resuelve.
