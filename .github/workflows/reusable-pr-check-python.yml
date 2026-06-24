@@ -47,6 +47,11 @@ on:
         required: false
         type: string
         default: 'app/api/**,app/main.py,app/config.py'
+      runner:
+        description: 'Runner label. Usar "self-hosted" para el runner on-prem de la org.'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
       test-env-vars:
         description: 'Variables de entorno para tests (formato KEY=VALUE, una por línea). Definir en el wrapper del repo, no aquí.'
         required: false
@@ -59,7 +64,7 @@ on:
 jobs:
   check:
     name: Tests & SonarQube
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     permissions:
       checks: write
