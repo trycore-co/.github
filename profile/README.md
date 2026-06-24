@@ -28,6 +28,7 @@ Los workflows viven en este repo (`.github/workflows/`) y cualquier repo de la o
 | `reusable-pr-check-node.yml` | React · Vite · Vitest · Node.js | ✅ Listo |
 | `reusable-pr-check-maven.yml` | Java · Spring Boot · Maven · JHipster | ✅ Listo |
 | `reusable-pr-check-angular.yml` | Angular · Karma · Jasmine | ✅ Listo |
+| `reusable-docs-coverage.yml` | Doc Coverage · Python · GitHub API | ✅ Listo |
 
 > **Prerequisitos ya configurados en la org:** `SONAR_TOKEN` (secret de org) y `SONAR_HOST_URL` (variable de org). No configurar por repo.
 
@@ -165,6 +166,62 @@ El repo [`trycore-ia-hub`](https://github.com/trycore-co/trycore-ia-hub) tiene d
 
 - [Implementar Pipeline en un repo](https://github.com/trycore-co/.github/blob/main/docs/IMPLEMENTAR-PIPELINE.md) — árbol de decisión · prompts listos para IA · errores frecuentes · crear job Jenkins
 - [Guía técnica de Buenas Prácticas CI/CD](https://github.com/trycore-co/.github/blob/main/docs/BUENAS-PRACTICAS-PIPELINE.md) — referencia completa de todos los stacks
+- [Código como Conocimiento](https://github.com/trycore-co/.github/blob/main/docs/CODIGO-COMO-CONOCIMIENTO.md) — auditoría automática de docs↔código: PR gate, merge audit con IA y audit trimestral
+
+---
+
+## Conocimiento vivo — Auditoría automática de docs
+
+> En proyectos donde el desarrollo lo aceleran agentes de IA, el código crece más rápido de lo que la documentación puede seguirlo manualmente. Esta capa lo resuelve automáticamente.
+
+**El principio:** si un cambio no está en Git, no existe. Si está en Git, está verificado.
+
+Tres capas automáticas que corren sobre el runner Jarvis:
+
+| Cuándo corre | Qué hace | ¿Bloquea el pipeline? |
+|---|---|---|
+| Cada PR | Verifica que el código llegue con sus docs (Python, sin IA, <30s) | ✅ Sí |
+| Cada merge a `main` | Analiza coherencia docs↔código con IA · Guarda knowledge snapshot | ❌ Abre issue |
+| Primer día de cada trimestre | Audita ADRs, HUs y specs de API vs código real | ❌ Abre issue |
+
+### Lo que ve el equipo
+
+- **En el PR:** si falta documentación, el bot comenta con instrucciones claras. No es un error críptico — es una conversación.
+- **Tras el merge:** Claude Haiku revisa el diff y reporta si los docs son coherentes con el código que llegó.
+- **Trimestralmente:** Claude Sonnet revisa si las decisiones de arquitectura (ADRs), historias de usuario y contratos de API siguen siendo verdad en el código actual.
+
+### Activar en un repo nuevo — 3 pasos
+
+**1.** Copiar `scripts/ci/docs-coverage-check.py` al repo del proyecto.
+
+**2.** Agregar el workflow usando el reusable de la org:
+
+```yaml
+# .github/workflows/docs-coverage-check.yml
+name: Doc Coverage — PR Gate
+on:
+  pull_request:
+    branches: [develop, main]
+    paths: ['src/**', 'docs/**', 'openspec/**']
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: 'Rama base'
+        default: 'develop'
+jobs:
+  doc-coverage:
+    uses: trycore-co/.github/.github/workflows/reusable-docs-coverage.yml@main
+    with:
+      runner: self-hosted
+      base_ref: ${{ inputs.base_ref || 'develop' }}
+      code_zones: 'src/'
+      doc_zones: 'docs/,openspec/'
+    secrets: inherit
+```
+
+**3.** Agregar `ANTHROPIC_API_KEY` como secret del repo (para Capas 2 y 3) y activar `Doc Coverage Check` como required status check en branch protection.
+
+> 📖 **Guía completa:** [Código como Conocimiento](https://github.com/trycore-co/.github/blob/main/docs/CODIGO-COMO-CONOCIMIENTO.md) — implementación paso a paso, preguntas frecuentes y costos estimados.
 
 ---
 
