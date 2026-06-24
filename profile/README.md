@@ -170,7 +170,7 @@ El repo [`trycore-ia-hub`](https://github.com/trycore-co/trycore-ia-hub) tiene d
 
 ---
 
-## Conocimiento vivo — Auditoría automática de docs
+## Conocimiento vivo (Auditoría automática de docs)
 
 > En proyectos donde el desarrollo lo aceleran agentes de IA, el código crece más rápido de lo que la documentación puede seguirlo manualmente. Esta capa lo resuelve automáticamente.
 
