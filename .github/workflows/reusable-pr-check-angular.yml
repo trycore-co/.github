@@ -33,6 +33,11 @@ on:
         required: false
         type: boolean
         default: false
+      runner:
+        description: 'Runner label. Usar "self-hosted" para el runner on-prem de Jarvis.'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
     secrets:
       SONAR_TOKEN:
         required: true
@@ -42,7 +47,7 @@ jobs:
   # ── 1. Build + Type-check + Tests + SonarQube ────────────────────────────────
   build-test-sonar:
     name: Build, Tests & SonarQube
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     permissions:
       checks: write
@@ -207,7 +212,7 @@ jobs:
   # ── 2. SCA: Trivy ────────────────────────────────────────────────────────────
   sca-trivy:
     name: SCA — Trivy
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     permissions:
       security-events: write
@@ -319,7 +324,7 @@ jobs:
   # ── 3. SCA: npm audit (OWASP A06) ────────────────────────────────────────────
   sca-npm-audit:
     name: SCA — npm audit
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     permissions:
       contents: read
