@@ -229,8 +229,9 @@ jobs:
         working-directory: ${{ inputs.service-dir }}
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-          # Un solo scan JSON — extrae conteos de los 3 niveles sin correr trivy 4 veces
+          # Un scan JSON captura vulnerabilidades (--ignore-unfixed) Y secretos en el mismo paso
           trivy fs . \
+            --scanners vuln,secret \
             --severity CRITICAL,HIGH,MEDIUM \
             --ignore-unfixed \
             --skip-dirs '.git,node_modules,dist' \
@@ -254,21 +255,56 @@ jobs:
           vulns = [v for r in d.get('Results',[]) for v in (r.get('Vulnerabilities') or [])]
           print(sum(1 for v in vulns if v.get('Severity')=='MEDIUM'))
           " 2>/dev/null || echo "0")
+          # Contar secretos expuestos (se detectan independiente de --ignore-unfixed)
+          SECRETS_CRITICAL=$(python3 -c "
+          import json
+          d = json.load(open('trivy-report.json'))
+          secs = [s for r in d.get('Results',[]) for s in (r.get('Secrets') or [])]
+          print(sum(1 for s in secs if s.get('Severity')=='CRITICAL'))
+          " 2>/dev/null || echo "0")
+          SECRETS_HIGH=$(python3 -c "
+          import json
+          d = json.load(open('trivy-report.json'))
+          secs = [s for r in d.get('Results',[]) for s in (r.get('Secrets') or [])]
+          print(sum(1 for s in secs if s.get('Severity')=='HIGH'))
+          " 2>/dev/null || echo "0")
+          # Emitir annotations de GitHub para secretos (visibles sin Code Security)
+          python3 -c "
+          import json
+          d = json.load(open('trivy-report.json'))
+          for r in d.get('Results', []):
+            target = r.get('Target','')
+            for s in (r.get('Secrets') or []):
+              sev = s.get('Severity','')
+              if sev in ('CRITICAL','HIGH'):
+                line = s.get('StartLine', 1)
+                rule = s.get('RuleID','secret')
+                title = s.get('Title','Secreto detectado')
+                print(f'::error file={target},line={line}::[Trivy Secrets] {title} ({rule}) — rotar credencial y reemplazar con placeholder')
+          " 2>/dev/null || true
           if [ "$CRITICAL" = "0" ] && [ "$HIGH" = "0" ]; then
             SCA_STATUS="✅ Sin vulnerabilidades CRITICAL/HIGH"
           else
             SCA_STATUS="⚠️ Vulnerabilidades encontradas (modo informativo)"
           fi
+          if [ "$SECRETS_CRITICAL" = "0" ] && [ "$SECRETS_HIGH" = "0" ]; then
+            SECRETS_STATUS="✅ Sin secretos expuestos"
+          else
+            SECRETS_STATUS="🚨 Secretos expuestos — rotar credenciales"
+          fi
           {
             echo "## 🛡️ SCA — Trivy — $SCA_STATUS"
             echo ""
-            echo "| Severidad | Vulnerabilidades encontradas |"
-            echo "|-----------|----------------------------|"
+            echo "| Severidad | Vulnerabilidades (con fix) |"
+            echo "|-----------|---------------------------|"
             echo "| 🔴 Critical | $CRITICAL |"
             echo "| 🟠 High | $HIGH |"
             echo "| 🟡 Medium | $MEDIUM |"
             echo ""
             echo "> Solo aplica a dependencias con fix disponible. Modo informativo — no bloquea el pipeline."
+            echo ""
+            echo "## 🔐 Secretos — Trivy — $SECRETS_STATUS"
+            echo ""
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$CRITICAL" != "0" ] || [ "$HIGH" != "0" ] || [ "$MEDIUM" != "0" ]; then
             DETAIL=$(python3 -c "
@@ -285,20 +321,44 @@ jobs:
           " 2>/dev/null || echo "")
             if [ -n "$DETAIL" ]; then
               {
-                echo ""
                 echo "<details>"
                 echo "<summary>📋 Ver detalle de CVEs encontrados (CRITICAL / HIGH / MEDIUM)</summary>"
                 echo ""
                 echo "| Paquete | Severidad | CVE | Versión instalada | Fix disponible |"
                 echo "|---------|-----------|-----|-------------------|----------------|"
                 echo "$DETAIL"
-                echo ""
                 echo "</details>"
+                echo ""
               } >> "$GITHUB_STEP_SUMMARY"
             fi
           fi
-          # Generar SARIF usando el binario ya instalado
+          # Detalle de secretos en el summary (sin exponer el valor real)
+          SECRET_DETAIL=$(python3 -c "
+          import json
+          d = json.load(open('trivy-report.json'))
+          rows = []
+          for r in d.get('Results', []):
+            target = r.get('Target','')
+            for s in (r.get('Secrets') or []):
+              sev = s.get('Severity','')
+              if sev in ('CRITICAL','HIGH','MEDIUM'):
+                rows.append(f\"| \`{target}\` | {sev} | {s.get('RuleID','?')} | {s.get('Title','?')} | L{s.get('StartLine','?')} |\")
+          print('\n'.join(rows[:30]))
+          " 2>/dev/null || echo "")
+          if [ -n "$SECRET_DETAIL" ]; then
+            {
+              echo "| Archivo | Severidad | Regla | Descripción | Línea |"
+              echo "|---------|-----------|-------|-------------|-------|"
+              echo "$SECRET_DETAIL"
+              echo ""
+              echo "> ⚠️ **Acción requerida:** rotar las credenciales expuestas y reemplazar con placeholders en el archivo."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "> Sin secretos detectados en el escaneo." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Generar SARIF (incluye vuln + secrets para Code Security si está habilitado)
           trivy fs . \
+            --scanners vuln,secret \
             --severity CRITICAL,HIGH,MEDIUM \
             --ignore-unfixed \
             --skip-dirs '.git,node_modules,dist' \
