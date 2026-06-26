@@ -70,6 +70,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: scheduled-audit-report-${{ github.run_id }}
-          path: scripts/ci/.last-scheduled-audit.json
+          path: scripts/ci/last-scheduled-audit.json
           retention-days: ${{ inputs.artifact_retention_days }}
           if-no-files-found: warn
