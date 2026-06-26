@@ -28,9 +28,11 @@ Los workflows viven en este repo (`.github/workflows/`) y cualquier repo de la o
 | `reusable-pr-check-node.yml` | React · Vite · Vitest · Node.js | ✅ Listo |
 | `reusable-pr-check-maven.yml` | Java · Spring Boot · Maven · JHipster | ✅ Listo |
 | `reusable-pr-check-angular.yml` | Angular · Karma · Jasmine | ✅ Listo |
-| `reusable-docs-coverage.yml` | Doc Coverage · Python · GitHub API | ✅ Listo |
+| `reusable-docs-coverage.yml` | Doc Coverage PR Gate (Capa 1) · Python | ✅ Listo |
+| `reusable-docs-merge-audit.yml` | Merge Audit con IA (Capa 2) · Claude Haiku | ✅ Listo |
+| `reusable-docs-scheduled-audit.yml` | Audit Trimestral (Capa 3) · Claude Sonnet | ✅ Listo |
 
-> **Prerequisitos ya configurados en la org:** `SONAR_TOKEN` (secret de org) y `SONAR_HOST_URL` (variable de org). No configurar por repo.
+> **Prerequisitos ya configurados en la org:** `SONAR_TOKEN` y `ANTHROPIC_API_KEY` (secrets de org) · `SONAR_HOST_URL` (variable de org). No configurar por repo.
 
 ### Cómo activar el CI en un repo nuevo — 3 pasos
 
@@ -221,7 +223,7 @@ jobs:
     secrets: inherit
 ```
 
-**3.** Agregar `ANTHROPIC_API_KEY` como secret del repo (para Capas 2 y 3) y activar `Doc Coverage Check` como required status check en branch protection.
+**3.** Activar `Doc Coverage Check` como required status check en branch protection. `ANTHROPIC_API_KEY` ya está configurada a nivel de org — no se necesita agregar por repo.
 
 > 📖 **Guía completa:** [Código como Conocimiento](https://github.com/trycore-co/.github/blob/main/docs/CODIGO-COMO-CONOCIMIENTO.md) — implementación paso a paso, preguntas frecuentes y costos estimados.
 
