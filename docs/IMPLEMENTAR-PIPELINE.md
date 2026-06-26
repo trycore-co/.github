@@ -445,9 +445,158 @@ Herramientas ya pre-instaladas en el runner (no necesitan pasos de instalación)
 **Referencia técnica:** §18 de la [Guía de Buenas Prácticas](BUENAS-PRACTICAS-PIPELINE.md#18-runners-self-hosted--flota-jarvis-y-trycore-server)
 
 
+## Caso 6 — Implementar auditoría documental automática (3 capas de conocimiento)
+
+**Para el líder:** este caso agrega al repo el sistema de *Código como Conocimiento* — tres capas de auditoría automática que aseguran que el código y la documentación se mantengan sincronizados. Ver [CODIGO-COMO-CONOCIMIENTO.md](CODIGO-COMO-CONOCIMIENTO.md) para la descripción completa.
+
+> **Cuándo aplicar:** en cualquier proyecto que ya tenga el pipeline de PR Check (Casos 1–3) y que también tenga documentación en `docs/`. Se puede implementar junto con el pipeline o después.
+
+**Para la IA 🤖 — copiar y pegar esto en el chat:**
+
+---
+
+Necesito implementar el sistema de auditoría documental automática (3 capas de conocimiento) en este repositorio, siguiendo los estándares de la organización `trycore-co`.
+
+Antes de generar cualquier archivo, lee la guía oficial completa en:
+https://github.com/trycore-co/.github/blob/main/docs/CODIGO-COMO-CONOCIMIENTO.md
+
+Y las plantillas de scripts en:
+https://github.com/trycore-co/.github/blob/main/docs/plantillas/README.md
+
+**Lo que ya existe y NO debes configurar:**
+- `ANTHROPIC_API_KEY` ya es secret de organización — todos los repos lo heredan con `secrets: inherit`
+- Los 3 reusable workflows ya existen en `trycore-co/.github`:
+  - `reusable-docs-coverage.yml` (Capa 1)
+  - `reusable-docs-merge-audit.yml` (Capa 2)
+  - `reusable-docs-scheduled-audit.yml` (Capa 3)
+
+**Lo que debes hacer — en orden:**
+
+**Paso 1 — Crear los labels** (una vez por repo, correr desde la raíz del repo):
+```bash
+gh label create "knowledge-drift" --color "d93f0b" --description "Drift documental detectado en merge"
+gh label create "knowledge-audit"  --color "e4e669" --description "Audit trimestral de conocimiento"
+gh label create "automated"        --color "0075ca" --description "Issue generado automáticamente"
+gh label create "quarterly"        --color "cfd3d7" --description "Revisión trimestral"
+```
+
+**Paso 2 — Crear los scripts en `scripts/ci/`**
+
+Copiar los 3 scripts de plantilla desde `docs/plantillas/` en el repo `trycore-co/.github`, renombrarlos y adaptar las variables marcadas con `# ADAPTAR:`:
+
+| Plantilla | Destino | Qué adaptar |
+|-----------|---------|-------------|
+| `docs-coverage-check.python-fastapi.py` | `scripts/ci/docs-coverage-check.py` | `CODE_ZONES`, `DOC_ZONES`, `ROUTER_PATTERN` según el stack |
+| `merge-audit.python-fastapi.py` | `scripts/ci/merge-audit.py` | `CODE_ZONES`, `DOC_ZONES`, prompt de Claude con descripción del proyecto |
+| `scheduled-audit.python-fastapi.py` | `scripts/ci/scheduled-audit.py` | Rutas de HUs, directorio de endpoints, prompt de Claude |
+
+**Paso 3 — Crear los 3 workflows en `.github/workflows/`**
+
+Usar exactamente estos wrappers (ajustar `code_zones` y `doc_zones`):
+
+```yaml
+# .github/workflows/docs-coverage-check.yml
+name: Doc Coverage — PR Gate (Capa 1)
+on:
+  pull_request:
+    branches: [develop, main, 'release/**']
+    paths:
+      - 'app/**'     # ajustar al stack: app/ | src/ | src/main/
+      - 'docs/**'
+  workflow_dispatch:
+    inputs:
+      base_ref: {description: 'Rama base', default: 'develop'}
+jobs:
+  doc-coverage:
+    uses: trycore-co/.github/.github/workflows/reusable-docs-coverage.yml@main
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      runner: self-hosted
+      base_ref: ${{ inputs.base_ref || 'develop' }}
+      code_zones: 'app/'     # ajustar
+      doc_zones: 'docs/'     # ajustar
+    secrets: inherit
+```
+
+```yaml
+# .github/workflows/merge-audit.yml
+name: Merge Audit + Knowledge Snapshot (Capa 2)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run: {type: boolean, default: false}
+      base_ref: {default: 'develop'}
+jobs:
+  merge-audit:
+    uses: trycore-co/.github/.github/workflows/reusable-docs-merge-audit.yml@main
+    permissions:
+      contents: read
+      issues: write
+    with:
+      runner: self-hosted
+      dry_run: ${{ inputs.dry_run || false }}
+      base_ref: ${{ inputs.base_ref || 'develop' }}
+    secrets: inherit
+```
+
+```yaml
+# .github/workflows/scheduled-audit.yml
+name: Scheduled Audit Trimestral (Capa 3)
+on:
+  schedule:
+    - cron: '0 9 1 1,4,7,10 *'
+  workflow_dispatch:
+    inputs:
+      scope:
+        type: choice
+        options: [all, hus-only, routers-only]
+        default: all
+jobs:
+  scheduled-audit:
+    uses: trycore-co/.github/.github/workflows/reusable-docs-scheduled-audit.yml@main
+    permissions:
+      contents: read
+      issues: write
+    with:
+      runner: self-hosted
+      scope: ${{ inputs.scope || 'all' }}
+    secrets: inherit
+```
+
+**Paso 4 — Validar**
+
+Validar cada capa en orden:
+
+1. **Capa 1**: `gh workflow run docs-coverage-check.yml --ref <rama>` → ver que el Summary muestra tabla con estado 🟢/🟡/🔴
+2. **Capa 2**: `gh workflow run merge-audit.yml --ref <rama>` → ver que el Summary muestra el análisis y que se generó el artefacto `knowledge-snapshot-<sha>`
+3. **Capa 3**: `gh workflow run scheduled-audit.yml --ref <rama>` → ver que el Summary muestra la tabla de HUs y routers, y que se generó el artefacto `scheduled-audit-report-<run_id>`
+
+Si la Capa 2 o 3 genera issues automáticos en el repo, es el comportamiento esperado — cerrarlos como "primera ejecución".
+
+**⚠️ Errores frecuentes:**
+- El artefacto de Capa 3 no se sube: verificar que el script escriba `scripts/ci/last-scheduled-audit.json` **sin punto inicial** — `actions/upload-artifact` ignora archivos ocultos.
+- `startup_failure` en el workflow: verificar que el job tenga el bloque `permissions:` (ver §16.6.1 de la guía).
+- La Capa 1 no detecta cambios: verificar que `paths:` en el trigger `pull_request` incluya las carpetas correctas del stack.
+
+---
+
+**Activar Capa 1 como required check** (hacerlo después de la primera ejecución exitosa):
+
+En GitHub → Settings → Branches → Branch protection rules → `develop` y `main`:
+- Activar "Require status checks to pass before merging"
+- Buscar y agregar el check `doc-coverage`
+
+---
+
 ## Referencia
 
 - [Guía completa de Buenas Prácticas CI/CD](BUENAS-PRACTICAS-PIPELINE.md) — referencia técnica detallada
 - [§16.3](BUENAS-PRACTICAS-PIPELINE.md#163-reusable-workflow--python-todo-en-uno) — estructura del reusable workflow Python (modelo para otros stacks)
 - [§16.6.1](BUENAS-PRACTICAS-PIPELINE.md#1661-lección-aprendida--startup_failure-por-permissions-en-reusable-workflows) — diagnóstico de `startup_failure`
 - [§16.7](BUENAS-PRACTICAS-PIPELINE.md#167-migración-de-un-repo-existente-al-wrapper-reusable) — guía de migración paso a paso
+- [Código como Conocimiento](CODIGO-COMO-CONOCIMIENTO.md) — sistema de auditoría documental (3 capas)
+- [Plantillas de scripts CI](plantillas/README.md) — scripts de referencia para copiar y adaptar

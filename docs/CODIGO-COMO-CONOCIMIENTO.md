@@ -162,13 +162,29 @@ jobs:
     secrets: inherit
 ```
 
-**Script `merge-audit.py`** — qué debe hacer:
-- Obtener los archivos que llegaron en el merge (`git diff HEAD^1 HEAD`)
-- Separar en `code_files` y `doc_files` según las zonas del proyecto
-- Llamar a `claude-haiku-4-5-20251001` con ambos diffs para analizar coherencia
-- Generar `scripts/ci/knowledge-snapshot.json` (manifest de todos los docs)
-- Si `drift_critico=true` → crear GitHub Issue con label `knowledge-drift`
-- Escribir Step Summary con estado (🟢/🟡/🔴), hallazgos y link al snapshot
+**Script `merge-audit.py`** — contrato exacto:
+
+| Elemento | Valor |
+|----------|-------|
+| Invocación | `python scripts/ci/merge-audit.py` |
+| **Env vars de entrada** | `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `GITHUB_REPOSITORY`, `GITHUB_SHA`, `DRY_RUN` (`"true"`/`"false"`), `MERGE_BASE_REF` (rama base, ej. `"develop"`) |
+| **Archivo generado** | `scripts/ci/knowledge-snapshot.json` |
+| **Exit code** | Siempre 0 (no bloquea el pipeline) |
+
+**Qué debe hacer**:
+1. Obtener los archivos que llegaron en el merge (`git diff HEAD^1 HEAD`)
+2. Separar en `code_files` y `doc_files` según las zonas del proyecto
+3. Llamar a `claude-haiku-4-5-20251001` con ambos diffs para analizar coherencia
+4. Claude devuelve JSON con este esquema:
+   ```json
+   {"drift_critico": false, "hallazgos": ["descripción del problema"], "accion_sugerida": "texto"}
+   ```
+5. Generar `scripts/ci/knowledge-snapshot.json` — manifest de todos los docs:
+   ```json
+   {"sha": "abc123", "timestamp": "2026-06-26T09:00:00Z", "docs": ["docs/file.md", ...]}
+   ```
+6. Si `drift_critico=true` y `DRY_RUN != "true"` → crear GitHub Issue con label `knowledge-drift`
+7. Escribir Step Summary con estado (🟢/🟡/🔴), hallazgos y link al snapshot
 
 > **Modelo**: `claude-haiku-4-5-20251001` — rápido (~12 s) y económico (~$0.03/merge).
 
@@ -217,11 +233,32 @@ jobs:
 | Python/FastAPI | HU trazabilidad · Router coverage (app/routers/ vs docs/) |
 | Node/React | HU trazabilidad · Módulos vs docs/ |
 
+**Contrato exacto del script**:
+
+| Elemento | Valor |
+|----------|-------|
+| Invocación | `python scripts/ci/scheduled-audit.py` |
+| **Env vars de entrada** | `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `GITHUB_REPOSITORY`, `AUDIT_SCOPE` (`"all"` \| `"hus-only"` \| `"routers-only"`) |
+| **Archivo generado** | `scripts/ci/last-scheduled-audit.json` (**sin punto inicial** — `actions/upload-artifact` ignora archivos ocultos) |
+| **Exit code** | Siempre 0 (no bloquea el pipeline) |
+
 El script siempre debe:
-- Guardar `scripts/ci/.last-scheduled-audit.json` (artefacto)
+- Guardar `scripts/ci/last-scheduled-audit.json` (artefacto — **sin punto inicial**, sin ese la acción de upload lo ignora)
 - Escribir Step Summary con tabla de items y conteos
 - Crear GitHub Issue con labels `knowledge-audit`, `quarterly`, `automated` si hay drift
 - Retornar 0 (nunca bloquea el pipeline)
+
+**Esquema del artefacto** `last-scheduled-audit.json`:
+```json
+{
+  "hus": [
+    {"hu": "docs/04-historias/HU-001.md", "estado": "implementada|parcial|no_implementada", "evidencia": "app/routers/...", "accion": "ninguna|completar_impl"}
+  ],
+  "routers": [
+    {"router": "app/routers/linkedin.py", "estado": "documentado|sin_doc|parcial", "doc_relacionada": "docs/...", "accion": "ninguna|crear_doc"}
+  ]
+}
+```
 
 > **Modelo**: `claude-sonnet-4-6` — análisis profundo, corre solo 4 veces al año (~$0.50-2.00/ejecución).
 

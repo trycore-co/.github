@@ -13,9 +13,23 @@ name: Reusable — Merge Audit + Knowledge Snapshot (Capa 2)
 #       uses: trycore-co/.github/.github/workflows/reusable-docs-merge-audit.yml@main
 #       secrets: inherit
 #
-# Prerequisito en el repo llamador:
-#   - scripts/ci/merge-audit.py  (ver docfly-saas-docs como referencia)
-#   - Secret ANTHROPIC_API_KEY   (configurado a nivel de organización)
+# CONTRATO del script scripts/ci/merge-audit.py (el repo llamador lo provee):
+#
+#   ENV VARS inyectadas por este reusable:
+#     ANTHROPIC_API_KEY   — heredada del org secret
+#     GITHUB_TOKEN        — token de Actions
+#     GITHUB_REPOSITORY   — "owner/repo"
+#     GITHUB_SHA          — SHA del commit
+#     DRY_RUN             — "true"/"false" según input dry_run
+#     MERGE_BASE_REF      — rama base según input base_ref (ej. "develop")
+#
+#   ARCHIVO que el script debe generar:
+#     scripts/ci/knowledge-snapshot.json
+#     Esquema: {"sha": "...", "total_files": N, "docs": ["docs/file.md", ...]}
+#
+#   EXIT CODE: siempre 0 (no bloquea el pipeline)
+#
+#   PLANTILLA: docs/plantillas/merge-audit.python-fastapi.py en trycore-co/.github
 
 on:
   workflow_call:

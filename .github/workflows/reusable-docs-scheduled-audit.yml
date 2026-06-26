@@ -14,9 +14,22 @@ name: Reusable — Scheduled Audit Trimestral (Capa 3)
 #       uses: trycore-co/.github/.github/workflows/reusable-docs-scheduled-audit.yml@main
 #       secrets: inherit
 #
-# Prerequisito en el repo llamador:
-#   - scripts/ci/scheduled-audit.py  (ver docfly-saas-docs como referencia)
-#   - Secret ANTHROPIC_API_KEY        (configurado a nivel de organización)
+# CONTRATO del script scripts/ci/scheduled-audit.py (el repo llamador lo provee):
+#
+#   ENV VARS inyectadas por este reusable:
+#     ANTHROPIC_API_KEY   — heredada del org secret
+#     GITHUB_TOKEN        — token de Actions
+#     GITHUB_REPOSITORY   — "owner/repo"
+#     AUDIT_SCOPE         — "all" | "hus-only" | "routers-only" (o custom del proyecto)
+#
+#   ARCHIVO que el script debe generar:
+#     scripts/ci/last-scheduled-audit.json   ← SIN punto inicial
+#     (IMPORTANTE: actions/upload-artifact ignora archivos ocultos — nunca usar .last-...)
+#     Esquema: {"hus": [...], "routers": [...]}
+#
+#   EXIT CODE: siempre 0 (no bloquea el pipeline)
+#
+#   PLANTILLA: docs/plantillas/scheduled-audit.python-fastapi.py en trycore-co/.github
 
 on:
   workflow_call:
