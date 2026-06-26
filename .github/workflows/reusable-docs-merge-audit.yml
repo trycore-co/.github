@@ -1,0 +1,80 @@
+name: Reusable — Merge Audit + Knowledge Snapshot (Capa 2)
+# Workflow reutilizable: audita coherencia docs↔código en cada merge a main con IA.
+# El script que ejecuta (scripts/ci/merge-audit.py) vive en el repo LLAMADOR —
+# el reusable solo provee el entorno (checkout, Python, secrets, artifact upload).
+#
+# Uso mínimo en el repo del proyecto:
+#
+#   on:
+#     push:
+#       branches: [main]
+#   jobs:
+#     merge-audit:
+#       uses: trycore-co/.github/.github/workflows/reusable-docs-merge-audit.yml@main
+#       secrets: inherit
+#
+# Prerequisito en el repo llamador:
+#   - scripts/ci/merge-audit.py  (ver docfly-saas-docs como referencia)
+#   - Secret ANTHROPIC_API_KEY   (configurado a nivel de organización)
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner a usar (self-hosted o ubuntu-latest)'
+        type: string
+        default: 'self-hosted'
+      dry_run:
+        description: 'No crear issues aunque haya drift crítico'
+        type: boolean
+        default: false
+      base_ref:
+        description: 'Rama base para el diff (ej: develop)'
+        type: string
+        default: 'develop'
+      python_version:
+        description: 'Versión de Python para el script de auditoría'
+        type: string
+        default: '3.11'
+      artifact_retention_days:
+        description: 'Días de retención del knowledge snapshot'
+        type: number
+        default: 90
+
+jobs:
+  merge-audit:
+    name: Merge Audit
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Run merge audit
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          MERGE_BASE_REF: ${{ inputs.base_ref }}
+        run: python scripts/ci/merge-audit.py
+
+      - name: Upload knowledge snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: knowledge-snapshot-${{ github.sha }}
+          path: scripts/ci/knowledge-snapshot.json
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: warn

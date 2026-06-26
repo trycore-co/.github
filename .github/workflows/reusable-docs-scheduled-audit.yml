@@ -1,0 +1,75 @@
+name: Reusable — Scheduled Audit Trimestral (Capa 3)
+# Workflow reutilizable: barrido trimestral completo de coherencia docs↔código.
+# El script que ejecuta (scripts/ci/scheduled-audit.py) vive en el repo LLAMADOR —
+# el reusable solo provee el entorno (checkout, Python, secrets, artifact upload).
+#
+# Uso mínimo en el repo del proyecto:
+#
+#   on:
+#     schedule:
+#       - cron: '0 9 1 1,4,7,10 *'
+#     workflow_dispatch:
+#   jobs:
+#     scheduled-audit:
+#       uses: trycore-co/.github/.github/workflows/reusable-docs-scheduled-audit.yml@main
+#       secrets: inherit
+#
+# Prerequisito en el repo llamador:
+#   - scripts/ci/scheduled-audit.py  (ver docfly-saas-docs como referencia)
+#   - Secret ANTHROPIC_API_KEY        (configurado a nivel de organización)
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner a usar (self-hosted o ubuntu-latest)'
+        type: string
+        default: 'self-hosted'
+      scope:
+        description: 'Alcance del audit (all u opciones específicas del proyecto)'
+        type: string
+        default: 'all'
+      python_version:
+        description: 'Versión de Python para el script de auditoría'
+        type: string
+        default: '3.11'
+      artifact_retention_days:
+        description: 'Días de retención del reporte de audit'
+        type: number
+        default: 365
+
+jobs:
+  scheduled-audit:
+    name: Scheduled Audit
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Run scheduled audit
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          AUDIT_SCOPE: ${{ inputs.scope }}
+        run: python scripts/ci/scheduled-audit.py
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scheduled-audit-report-${{ github.run_id }}
+          path: scripts/ci/.last-scheduled-audit.json
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: warn
