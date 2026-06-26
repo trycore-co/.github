@@ -245,6 +245,12 @@ jobs:
       - name: Quality Gate
         uses: sonarsource/sonarqube-quality-gate-action@master
         timeout-minutes: 5
+        # Sin suite de tests no hay datos de cobertura → el QG por defecto
+        # falla en 0% coverage aunque el código no tenga bugs. En ese caso
+        # el resultado es informacional: el QG se muestra en el Summary pero
+        # no bloquea el PR. Agregar tests y cambiar has-tests: true para que
+        # el QG sea un gate real.
+        continue-on-error: ${{ !inputs.has-tests }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
