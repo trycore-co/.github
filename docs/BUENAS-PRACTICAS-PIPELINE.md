@@ -1417,7 +1417,18 @@ trivy fs . --severity CRITICAL,HIGH --ignore-unfixed ...
 
 ### 9.3 En repos privados sin GitHub Advanced Security
 
-El SARIF no se puede subir a la pestaña Security de GitHub en repos privados sin licencia Advanced Security. En ese caso el step `Upload SARIF` fallará con `continue-on-error: true` — el artefacto JSON sirve como respaldo:
+El SARIF no se puede subir a la pestaña Security de GitHub en repos privados sin licencia Advanced Security. Por eso el step `Upload SARIF` está gateado por el input opcional `enable-code-scanning` (default `false`) en los 4 reusables (`python`, `maven`, `node`, `angular`):
+
+```yaml
+- name: Upload SARIF
+  uses: github/codeql-action/upload-sarif@v4
+  if: always() && inputs.enable-code-scanning
+  continue-on-error: true
+  with:
+    sarif_file: trivy-results.sarif
+```
+
+Con el default (`false`), el paso se **salta por completo** — no genera la anotación de error `Code Security must be enabled...` que aparecía en cada PR check cuando GHAS no está disponible (el caso de todos los repos de la org hoy). Si un repo llega a tener GitHub Advanced Security habilitado, el wrapper (`pr-check.yml` del repo) puede pasar `enable-code-scanning: true` para reactivar la subida. El artefacto JSON sigue generándose siempre, sin depender de este input, y sirve como respaldo/consulta manual:
 
 ```yaml
 - uses: actions/upload-artifact@v4
@@ -3056,6 +3067,7 @@ Esta tabla resume las responsabilidades de cada capa para evitar que lógica de 
 | `on: pull_request:` con `branches:` y `paths:` | ❌ No aplica | ✅ Aquí |
 | `service-dir`, `sonar-project-key`, `python-version` | Declarar como input | Pasar el valor concreto |
 | `has-tests`, `tests-continue-on-error` | Declarar como input (default `false`) | Pasar `true` si aplica |
+| `enable-code-scanning` (gate del step `Upload SARIF`) | Declarar como input (default `false` — ver §9.3) | Pasar `true` solo si el repo tiene GitHub Advanced Security habilitado |
 | `env:` con vars de entorno específicas del proyecto | ❌ Prohibido (§16.6.2) | ✅ Aquí, o como repo variables/secrets |
 | `continue-on-error` en Quality Gate | ❌ Prohibido (§16.6.3) | Solo si el equipo lo decide y lo documenta |
 | URLs, tokens, endpoints de infraestructura propia | ❌ Prohibido (§16.6.2) | Pasar vía `secrets: inherit` o repo vars |
