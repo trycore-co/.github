@@ -33,6 +33,11 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
+      enable-code-scanning:
+        description: 'true si el repo tiene GitHub Advanced Security (Code Security) habilitado — activa la subida de SARIF a code scanning.'
+        required: false
+        type: boolean
+        default: false
     secrets:
       SONAR_TOKEN:
         required: true
@@ -372,7 +377,7 @@ jobs:
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v4
-        if: always()
+        if: always() && inputs.enable-code-scanning
         continue-on-error: true
         with:
           sarif_file: trivy-results.sarif
