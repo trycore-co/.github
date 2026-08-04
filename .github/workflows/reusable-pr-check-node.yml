@@ -33,6 +33,11 @@ on:
         required: false
         type: boolean
         default: false
+      sonar-quality-gate-continue-on-error:
+        description: 'TEMPORAL: true si SonarQube Community Edition no soporta branch/PR analysis para este proyecto — sin eso, escaneos concurrentes sobre el mismo project key se cancelan entre sí (CE task queda CANCELLED) y el paso Quality Gate revienta el job por una cancelación de infraestructura, no por una falla de calidad real.'
+        required: false
+        type: boolean
+        default: false
       coverage-exclusions:
         description: 'Patrones Sonar para excluir de cobertura (lcov)'
         required: false
@@ -58,6 +63,14 @@ jobs:
     name: Build, Tests & SonarQube
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
+    # Community Edition has no branch/PR analysis: every push/PR analyzes the
+    # SAME project-key slot. Without this, two runs overlapping in time make
+    # SonarQube cancel one background task (CE), and the Quality Gate step
+    # below hard-fails on that CANCELLED status regardless of code quality.
+    # Serialize instead of cancelling so each analysis actually completes.
+    concurrency:
+      group: sonar-${{ inputs.sonar-project-key }}
+      cancel-in-progress: false
     permissions:
       checks: write
       contents: read
@@ -207,6 +220,7 @@ jobs:
       - name: Quality Gate
         uses: sonarsource/sonarqube-quality-gate-action@master
         timeout-minutes: 5
+        continue-on-error: ${{ inputs.sonar-quality-gate-continue-on-error }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
