@@ -220,7 +220,13 @@ jobs:
       - name: Quality Gate
         uses: sonarsource/sonarqube-quality-gate-action@master
         timeout-minutes: 5
-        continue-on-error: ${{ inputs.sonar-quality-gate-continue-on-error }}
+        # Explicit boolean comparison, not a bare context reference: the bare
+        # form (`${{ inputs.sonar-quality-gate-continue-on-error }}`) resolved
+        # to an empty string at runtime instead of `false`/`true` — GitHub
+        # rejects `continue-on-error: ''` ("Unexpected value ''"), which
+        # ironically hard-fails the very step this input exists to soften.
+        # An explicit `== true` always evaluates to a real boolean.
+        continue-on-error: ${{ inputs.sonar-quality-gate-continue-on-error == true }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
