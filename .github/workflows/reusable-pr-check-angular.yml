@@ -47,6 +47,13 @@ on:
       SONAR_TOKEN:
         required: true
 
+# Cancela la ejecucion ANTERIOR del mismo PR cuando llega un push nuevo (ahorra runners on-prem).
+# Solo aplica a eventos de PR: en push/dispatch el grupo incluye run_id (unico), asi que
+# nunca se cancela ni se encola un merge o un deploy. sonar-project-key separa servicios de un mismo repo.
+concurrency:
+  group: pr-check-${{ github.workflow }}-${{ inputs.sonar-project-key }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
 
   # ── 1. Build + Type-check + Tests + SonarQube ────────────────────────────────
