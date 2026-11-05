@@ -1,0 +1,201 @@
+name: Reusable — PR Check Rust
+
+# PR check de un crate Rust: fmt · clippy · test · cargo audit, con el resultado en el Summary del run.
+#
+# Velocidad (medido en el host gitworkd, i7-8550U, 2026-11-05, ver docs/BUENAS-PRACTICAS-PIPELINE.md §16.8):
+# - La caché de GitHub (actions/cache) NO sirve entre PRs: queda atada a refs/pull/N y la rama base no tiene
+#   ninguna, así que cada PR nuevo compilaba desde cero y además pagaba ~100 s subiendo la caché.
+# - En su lugar, en runners self-hosted el directorio de compilación vive en el DISCO DEL HOST
+#   (`cache-root/<repo>/<crate>`) y se reutiliza entre PRs: −72 % en los 5 servicios de docfly (28,7 → 8,1 min).
+#   Cargo ya bloquea el directorio si dos jobs lo usan a la vez, así que no hace falta candado propio.
+# - Sin debuginfo ni compilación incremental (no sirven en CI): −16 % y la mitad de disco.
+# En runners hospedados (o si `cache-root` no es escribible) compila en el workspace, sin caché.
+
+on:
+  workflow_call:
+    inputs:
+      crate-dir:
+        description: 'Directorio del crate desde la raíz del repo (donde está su Cargo.toml). Usar "." si es la raíz.'
+        required: false
+        type: string
+        default: '.'
+      crate-name:
+        description: 'Nombre legible para el Summary (por defecto, el directorio).'
+        required: false
+        type: string
+        default: ''
+      rust-version:
+        description: 'Toolchain de Rust (ej. "1.98.0" o "stable").'
+        required: false
+        type: string
+        default: 'stable'
+      runner:
+        description: 'Labels del runner en JSON. Ej. ["self-hosted","gitworkd"] o "ubuntu-latest".'
+        required: false
+        type: string
+        default: '"ubuntu-latest"'
+      cache-root:
+        description: 'Directorio PERSISTENTE del host para la caché de compilación (solo self-hosted). Vacío = sin caché.'
+        required: false
+        type: string
+        default: '/srv/github-runners/_cargo-cache'
+      cache-max-gb:
+        description: 'Si la caché del crate supera este tamaño se vacía antes de compilar (evita que crezca sin límite).'
+        required: false
+        type: number
+        default: 4
+      run-audit:
+        description: 'true para correr cargo audit (RustSec). Una vulnerabilidad sin ignorar falla el check.'
+        required: false
+        type: boolean
+        default: true
+      timeout-minutes:
+        required: false
+        type: number
+        default: 45
+
+# Un push nuevo al mismo PR cancela la corrida anterior de ESE crate. En push/dispatch el grupo lleva run_id.
+concurrency:
+  group: pr-check-rust-${{ github.repository }}-${{ inputs.crate-dir }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Rust · ${{ inputs.crate-name || inputs.crate-dir }}
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CRATE_DIR: ${{ inputs.crate-dir }}
+      CRATE_NAME: ${{ inputs.crate-name || inputs.crate-dir }}
+    steps:
+      # Repo completo: los tests de un crate pueden leer archivos de otras carpetas del monorepo.
+      - uses: actions/checkout@v4
+
+      - name: Toolchain de Rust (${{ inputs.rust-version }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ inputs.rust-version }}
+          components: rustfmt, clippy
+
+      - name: Caché de compilación en el host
+        env:
+          CACHE_ROOT: ${{ inputs.cache-root }}
+          CACHE_MAX_GB: ${{ inputs.cache-max-gb }}
+        run: |
+          slug="$(echo "$CRATE_DIR" | tr '/.' '__')"
+          dir=""
+          if [ "$RUNNER_ENVIRONMENT" = "self-hosted" ] && [ -n "$CACHE_ROOT" ] && mkdir -p "$CACHE_ROOT" 2>/dev/null && [ -w "$CACHE_ROOT" ]; then
+            dir="$CACHE_ROOT/${GITHUB_REPOSITORY//\//_}/$slug-${{ inputs.rust-version }}"
+            mkdir -p "$dir"
+            kb=$(du -sk "$dir" | cut -f1)
+            if [ "$kb" -gt $(( CACHE_MAX_GB * 1024 * 1024 )) ]; then
+              echo "Caché de $((kb/1024)) MB > ${CACHE_MAX_GB} GB: se vacía."
+              rm -rf "$dir" && mkdir -p "$dir"
+            fi
+            echo "Caché persistente: $dir ($(( $(du -sk "$dir" | cut -f1) / 1024 )) MB)"
+          else
+            echo "Sin caché persistente: compila en el workspace."
+          fi
+          [ -n "$dir" ] && echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/rust-check"
+          echo "RESULTS=$RUNNER_TEMP/rust-check" >> "$GITHUB_ENV"
+
+      - name: cargo fmt --check
+        id: fmt
+        continue-on-error: true
+        working-directory: ${{ inputs.crate-dir }}
+        run: cargo fmt --check
+
+      - name: cargo clippy -D warnings
+        id: clippy
+        continue-on-error: true
+        working-directory: ${{ inputs.crate-dir }}
+        run: |
+          set -o pipefail
+          cargo clippy --all-targets -- -D warnings 2>&1 | tee "$RESULTS/clippy.log"
+
+      - name: cargo test
+        id: test
+        continue-on-error: true
+        working-directory: ${{ inputs.crate-dir }}
+        run: |
+          set -o pipefail
+          cargo test --all-targets 2>&1 | tee "$RESULTS/test.log"
+
+      - name: cargo audit
+        id: audit
+        if: inputs.run-audit
+        continue-on-error: true
+        working-directory: ${{ inputs.crate-dir }}
+        run: |
+          command -v cargo-audit >/dev/null 2>&1 || cargo install cargo-audit --locked
+          cargo audit --json > "$RESULTS/audit.json" || rc=$?
+          cargo audit || true
+          exit "${rc:-0}"
+
+      - name: Resumen en el Summary
+        if: always()
+        env:
+          FMT: ${{ steps.fmt.outcome }}
+          CLIPPY: ${{ steps.clippy.outcome }}
+          TEST: ${{ steps.test.outcome }}
+          AUDIT: ${{ steps.audit.outcome }}
+        run: |
+          icon() { case "$1" in success) echo "✅";; failure) echo "❌";; skipped|"") echo "⏭️";; *) echo "⚠️ $1";; esac; }
+          passed=0 failed=0 ignored=0
+          if [ -f "$RESULTS/test.log" ]; then
+            while read -r p f i; do passed=$((passed+p)); failed=$((failed+f)); ignored=$((ignored+i)); done < <(
+              sed -nE 's/^test result: [A-Za-z]+\. ([0-9]+) passed; ([0-9]+) failed; ([0-9]+) ignored.*/\1 \2 \3/p' "$RESULTS/test.log")
+          fi
+          warn=0
+          [ -f "$RESULTS/clippy.log" ] && warn=$(grep -cE '^(warning|error)(\[|:)' "$RESULTS/clippy.log" || true)
+          vulns="—"; vlist=""
+          if [ -f "$RESULTS/audit.json" ] && command -v jq >/dev/null 2>&1; then
+            vulns=$(jq -r '.vulnerabilities.count // 0' "$RESULTS/audit.json" 2>/dev/null || echo "?")
+            vlist=$(jq -r '.vulnerabilities.list[]? | "| `\(.package.name) \(.package.version)` | \(.advisory.id) | \(.advisory.title) |"' "$RESULTS/audit.json" 2>/dev/null || true)
+          fi
+          {
+            echo "## 🦀 Rust — ${CRATE_NAME}"
+            echo
+            echo "| Paso | Resultado | Detalle |"
+            echo "|---|---|---|"
+            echo "| Formato (\`cargo fmt\`) | $(icon "$FMT") | — |"
+            echo "| Lints (\`cargo clippy -D warnings\`) | $(icon "$CLIPPY") | ${warn} avisos/errores |"
+            echo "| Tests (\`cargo test\`) | $(icon "$TEST") | ${passed} pasados · ${failed} fallidos · ${ignored} ignorados |"
+            echo "| Vulnerabilidades (\`cargo audit\`) | $(icon "$AUDIT") | ${vulns} |"
+            if [ -n "$vlist" ]; then
+              echo
+              echo "<details><summary>Vulnerabilidades encontradas</summary>"
+              echo
+              echo "| Paquete | Advisory | Título |"
+              echo "|---|---|---|"
+              echo "$vlist"
+              echo
+              echo "</details>"
+            fi
+            if [ "$TEST" = "failure" ] && [ -f "$RESULTS/test.log" ]; then
+              echo
+              echo "<details><summary>Tests fallidos</summary>"
+              echo
+              echo '```'
+              grep -E -- '--- FAILED|^failures:|panicked at' "$RESULTS/test.log" | head -40
+              echo '```'
+              echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Resultado
+        if: always()
+        env:
+          OUTCOMES: ${{ steps.fmt.outcome }} ${{ steps.clippy.outcome }} ${{ steps.test.outcome }} ${{ steps.audit.outcome }}
+        run: |
+          for o in $OUTCOMES; do
+            if [ "$o" = failure ] || [ "$o" = cancelled ]; then echo "Algún paso falló: $OUTCOMES"; exit 1; fi
+          done
+          echo "Todo en verde."

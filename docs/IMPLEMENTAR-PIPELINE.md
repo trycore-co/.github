@@ -181,6 +181,7 @@ Lee específicamente **§16.7** (Migración de repo existente) y **§16.6.1** (s
 > - **Node.js / React / Vite / Vitest** → `reusable-pr-check-node.yml` → usar **Caso 1**
 > - **Java/Maven / JHipster** → `reusable-pr-check-maven.yml` → usar **Caso 1**
 > - **Angular** → `reusable-pr-check-angular.yml` → usar **Caso 1**
+> - **Rust** → `reusable-pr-check-rust.yml` → usar **Caso 1** (ver §16.8 de la guía; sin SonarQube)
 >
 > **Este caso aplica solo para stacks que NO están en la lista anterior** — por ejemplo Go, .NET, Ruby, etc.
 
