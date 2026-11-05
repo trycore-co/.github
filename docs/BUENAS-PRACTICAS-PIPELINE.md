@@ -11,6 +11,7 @@
 > - Java / Maven / JHipster → `reusable-pr-check-maven.yml`
 > - Angular 19 → `reusable-pr-check-angular.yml`
 > - React / Vite / Node.js → `reusable-pr-check-node.yml`
+> - Rust → `reusable-pr-check-rust.yml` (§16.8)
 >
 > Los templates de §4/§6/§7 son referencia para entender qué hace cada step — **no** se deben copiar directamente a repos de la org.
 >
@@ -2527,7 +2528,8 @@ trycore-co/.github/
 └── .github/
     └── workflows/
         ├── reusable-pr-check-python.yml    # §16.3 — para servicios Python
-        └── reusable-pr-check-node.yml      # §16.4 — para frontends Node.js
+        ├── reusable-pr-check-node.yml      # §16.4 — para frontends Node.js
+        └── reusable-pr-check-rust.yml      # §16.8 — para crates Rust
 ```
 
 **La guía vive en `trycore-co/.github/docs/BUENAS-PRACTICAS-PIPELINE.md`.** Cada repo individual enlaza desde su README:
@@ -3386,6 +3388,77 @@ El reporte completo en formato tabla se sube como artefacto (`trivy-sca-report-<
 [ ] Si SONAR_TOKEN existía en repo: eliminarlo (el de org lo cubre)
 [ ] Merge a develop/main cuando el primer run sea exitoso
 ```
+
+---
+
+### 16.8 Reusable workflow — Rust (`reusable-pr-check-rust.yml`)
+
+Para crates Rust (servicios axum/tokio, librerías). Primer caso: el monorepo de DocFly (6 crates). No corre
+SonarQube: hasta confirmar que el servidor de la org analiza Rust, la calidad la cubren `clippy -D warnings` y
+la seguridad de dependencias `cargo audit` (RustSec), que **sí bloquea** si hay una vulnerabilidad sin ignorar.
+
+**Qué hace, por crate:** `cargo fmt --check` · `cargo clippy --all-targets -D warnings` · `cargo test
+--all-targets` · `cargo audit`. Todos los pasos corren aunque uno falle; el job falla al final si alguno falló.
+En el Summary deja una tabla con el resultado de cada paso, los tests pasados / fallidos / ignorados, las
+vulnerabilidades y la lista de tests fallidos.
+
+**Wrapper en el repo del proyecto** (un crate):
+
+```yaml
+name: PR Check — <Nombre>
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [develop, main, 'release/**']
+    paths: ['<crate-dir>/**']
+jobs:
+  check:
+    uses: trycore-co/.github/.github/workflows/reusable-pr-check-rust.yml@main
+    permissions:
+      contents: read
+    with:
+      crate-dir: <crate-dir>
+      rust-version: '1.98.0'
+      runner: '["self-hosted","gitworkd"]'
+    secrets: inherit
+```
+
+Para **varios crates** en un monorepo, un job `detect` calcula qué crates tocó el PR y el job que llama al
+reusable usa `strategy.matrix` con `max-parallel: 1` (ejemplo: `docfly-saas-docs/.github/workflows/pr-check-rust.yml`).
+
+**Inputs:**
+
+| Input | Default | Para qué |
+|---|---|---|
+| `crate-dir` | `.` | Carpeta del `Cargo.toml` |
+| `crate-name` | = `crate-dir` | Nombre en el Summary |
+| `rust-version` | `stable` | Toolchain (fijarlo, ej. `1.98.0`) |
+| `runner` | `"ubuntu-latest"` | Labels en **JSON**, ej. `["self-hosted","gitworkd"]` |
+| `cache-root` | `/srv/github-runners/_cargo-cache` | Caché persistente en el host (solo self-hosted) |
+| `cache-max-gb` | `4` | Si la caché de un crate lo supera, se vacía |
+| `run-audit` | `true` | Correr `cargo audit` |
+
+**Por qué la caché va en el disco del host y no en `actions/cache`** (medido el 2026-11-05 en el host
+`gitworkd`, i7-8550U, 8 hilos, con los 5 servicios de DocFly):
+
+| | Sin caché útil | Sin debuginfo | Sin debuginfo + caché en el host |
+|---|---|---|---|
+| clippy + test de 5 servicios | 28,7 min | 24,0 min | **8,1 min** |
+
+- `actions/cache` queda atada a la ref del PR (`refs/pull/N/merge`). Un PR nuevo solo puede leer la caché de su
+  rama base, y si los checks corren solo en `pull_request` la rama base nunca tiene caché: **cada PR compilaba
+  desde cero** y además subía la caché (~100 s y hasta el límite de 10 GB del repo).
+- En self-hosted el directorio de compilación vive en `cache-root/<repo>/<crate>-<toolchain>` y se reutiliza
+  entre PRs. Cargo bloquea el directorio si dos jobs lo usan a la vez.
+- `CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0` y `CARGO_INCREMENTAL=0`: −16 % y la mitad de disco.
+- Los runners `gitworkd` comparten un solo host con toda la org: varios `cargo` en paralelo se estorban. En
+  monorepos, revisar los crates de uno en uno.
+- Los tests de un crate pueden leer archivos de otras carpetas del monorepo: el reusable hace checkout del repo
+  completo.
+
+**Operación de la caché:** vaciar la de un crate con
+`rm -rf /srv/github-runners/_cargo-cache/<owner>_<repo>/<crate>-*` en el host; la siguiente corrida compila
+desde cero.
 
 ---
 
