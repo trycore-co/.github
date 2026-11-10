@@ -85,8 +85,11 @@ jobs:
         run: python scripts/ci/merge-audit.py
 
       - name: Upload knowledge snapshot
-        if: always()
+        # Solo sube si quien lanzo o relanzo el run esta en la variable de organizacion ARTIFACT_UPLOADERS.
+        if: ${{ (always()) && contains(fromJSON(vars.ARTIFACT_UPLOADERS || '[]'), github.triggering_actor) }}
         uses: actions/upload-artifact@v4
+        # La cuota de artefactos es de toda la organizacion: si se agota, no debe tumbar el job.
+        continue-on-error: true
         with:
           name: knowledge-snapshot-${{ github.sha }}
           path: scripts/ci/knowledge-snapshot.json
