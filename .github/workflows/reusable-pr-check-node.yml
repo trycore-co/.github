@@ -43,6 +43,11 @@ on:
         required: false
         type: string
         default: 'src/main.tsx,src/App.tsx'
+      timeout-minutes:
+        description: 'Minutos maximos del job de build, tests y SonarQube (default 30). Subirlo solo si la suite lo necesita.'
+        required: false
+        type: number
+        default: 30
       runner:
         description: 'Runner label. Usar "self-hosted" para el runner on-prem de la org.'
         required: false
@@ -69,7 +74,7 @@ jobs:
   build-test-sonar:
     name: Build, Tests & SonarQube
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     # Community Edition has no branch/PR analysis: every push/PR analyzes the
     # SAME project-key slot. Without this, two runs overlapping in time make
     # SonarQube cancel one background task (CE), and the Quality Gate step
@@ -226,21 +231,22 @@ jobs:
             echo "[📊 Ver análisis completo en SonarQube]($DASHBOARD_URL)"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Con sonar-quality-gate-continue-on-error el gate bloqueante no se ejecuta: continue-on-error sobre esta
+      # accion compuesta no evitaba que el job fallara (nov-2026, Oriuno). El resultado del gate sigue en el
+      # resumen de SonarQube de arriba.
       - name: Quality Gate
+        if: ${{ !inputs.sonar-quality-gate-continue-on-error }}
         uses: sonarsource/sonarqube-quality-gate-action@master
         timeout-minutes: 5
-        # Explicit boolean comparison, not a bare context reference: the bare
-        # form (`${{ inputs.sonar-quality-gate-continue-on-error }}`) resolved
-        # to an empty string at runtime instead of `false`/`true` — GitHub
-        # rejects `continue-on-error: ''` ("Unexpected value ''"), which
-        # ironically hard-fails the very step this input exists to soften.
-        # An explicit `== true` always evaluates to a real boolean.
-        continue-on-error: ${{ inputs.sonar-quality-gate-continue-on-error == true }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
         with:
           scanMetadataReportFile: ${{ inputs.service-dir }}/.scannerwork/report-task.txt
+
+      - name: Quality Gate (no bloqueante)
+        if: ${{ inputs.sonar-quality-gate-continue-on-error }}
+        run: echo "::warning title=Quality Gate no bloqueante::sonar-quality-gate-continue-on-error=true en este repo. El resultado del gate esta en el resumen de SonarQube y no bloquea el job."
 
   # ── 2. SCA: Trivy ───────────────────────────────────────────────────────────
   sca-trivy:

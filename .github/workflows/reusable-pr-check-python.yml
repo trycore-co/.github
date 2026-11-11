@@ -47,6 +47,11 @@ on:
         required: false
         type: string
         default: 'app/api/**,app/main.py,app/config.py'
+      timeout-minutes:
+        description: 'Minutos maximos del job de build, tests y SonarQube (default 30). Subirlo solo si la suite lo necesita.'
+        required: false
+        type: number
+        default: 30
       runner:
         description: 'Runner label. Usar "self-hosted" para el runner on-prem de la org.'
         required: false
@@ -77,7 +82,7 @@ jobs:
   check:
     name: Tests & SonarQube
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       checks: write
       contents: read
