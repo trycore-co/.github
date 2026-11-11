@@ -82,7 +82,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
-          cache: 'npm'
+          # Cache de GitHub solo en runners de GitHub: en self-hosted la del gestor ya vive en disco, y subirla
+          # (~1.4 GB de npm) colgaba el paso Post hasta el timeout del job (nov-2026).
+          cache: ${{ runner.environment == 'github-hosted' && 'npm' || '' }}
           cache-dependency-path: '${{ inputs.service-dir }}/package-lock.json'
 
       - name: Cache SonarQube
@@ -410,7 +412,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
-          cache: 'npm'
+          # Cache de GitHub solo en runners de GitHub: en self-hosted la del gestor ya vive en disco, y subirla
+          # (~1.4 GB de npm) colgaba el paso Post hasta el timeout del job (nov-2026).
+          cache: ${{ runner.environment == 'github-hosted' && 'npm' || '' }}
           cache-dependency-path: '${{ inputs.service-dir }}/package-lock.json'
 
       - name: Install dependencies
