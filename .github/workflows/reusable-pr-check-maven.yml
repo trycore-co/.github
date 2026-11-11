@@ -28,6 +28,11 @@ on:
         required: false
         type: boolean
         default: false
+      timeout-minutes:
+        description: 'Minutos maximos del job de build, tests y SonarQube (default 30). Subirlo solo si la suite lo necesita.'
+        required: false
+        type: number
+        default: 30
       runner:
         description: 'Runner label. Usar "self-hosted" para el runner on-prem de Jarvis.'
         required: false
@@ -55,7 +60,7 @@ jobs:
   build-test-sonar:
     name: Tests & SonarQube
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       checks: write
       contents: read
