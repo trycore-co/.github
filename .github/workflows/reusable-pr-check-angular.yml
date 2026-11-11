@@ -379,7 +379,10 @@ jobs:
             --output trivy-results.sarif 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        # La cuota de artefactos es de toda la organizacion: si se agota, no debe tumbar el job.
+        continue-on-error: true
+        # Solo sube si quien lanzo o relanzo el run esta en la variable de organizacion ARTIFACT_UPLOADERS.
+        if: ${{ (always()) && contains(fromJSON(vars.ARTIFACT_UPLOADERS || '[]'), github.triggering_actor) }}
         with:
           name: trivy-sca-report-${{ steps.artifact.outputs.key }}-${{ github.run_id }}
           path: ${{ inputs.service-dir }}/trivy-report.json
@@ -492,7 +495,10 @@ jobs:
         run: echo "ARTIFACT_KEY=$(echo '${{ inputs.sonar-project-key }}' | tr ':' '-')" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        # La cuota de artefactos es de toda la organizacion: si se agota, no debe tumbar el job.
+        continue-on-error: true
+        # Solo sube si quien lanzo o relanzo el run esta en la variable de organizacion ARTIFACT_UPLOADERS.
+        if: ${{ (always()) && contains(fromJSON(vars.ARTIFACT_UPLOADERS || '[]'), github.triggering_actor) }}
         with:
           name: npm-audit-report-${{ env.ARTIFACT_KEY }}-${{ github.run_id }}
           path: ${{ inputs.service-dir }}/npm-audit.json
