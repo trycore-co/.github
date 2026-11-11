@@ -78,7 +78,9 @@ jobs:
         with:
           java-version: ${{ inputs.java-version }}
           distribution: 'zulu'
-          cache: 'maven'
+          # Cache de GitHub solo en runners de GitHub: en self-hosted la del gestor ya vive en disco, y subirla
+          # (~1.4 GB de npm) colgaba el paso Post hasta el timeout del job (nov-2026).
+          cache: ${{ runner.environment == 'github-hosted' && 'maven' || '' }}
 
       - name: Cache SonarQube
         uses: actions/cache@v4
